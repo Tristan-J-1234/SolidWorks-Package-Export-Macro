@@ -4,7 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.2
+' Version : 1.3
 ' ****************************************************************************************************
 
 Sub main()
@@ -42,7 +42,8 @@ Sub main()
 
     ' Extraction nom du fichier du nom de la feuille
     Dim NomFichier As String
-    NomFichier = (VBA.Strings.Left(swModel.GetTitle, InStr(swModel.GetTitle, "-") - 2))
+    NomFichier = (VBA.Strings.Left(swModel.GetTitle, InStr(swModel.GetTitle, "-") - 1))
+    NomFichier = VBA.Strings.Trim(NomFichier)
     
     ' Demande indice de révision puis ajout date du jour
     Dim Indice_brute As String
@@ -50,6 +51,8 @@ Sub main()
     ' Indice = InputBox("Veuillez saisie l'indice du plan ?", "Indice du plan") 'La variable reçoit la valeur entrée dans l'InputBox
     Set cusPropMgr = swModel.Extension.CustomPropertyManager("")
     cusPropMgr.Get5 "Révision", False, Indice_brute, Indice, False
+    ' Trim enlève les espaces. Si l'indice contient " " il devient "" ; et on n'ajoute pas "Ind" pour éviter les noms du type "Ind -20260303"
+    Indice = VBA.Strings.Trim(Indice)
     If Indice = "" Then
        Indice = "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
     Else
