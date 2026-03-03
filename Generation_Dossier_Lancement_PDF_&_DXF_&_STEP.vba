@@ -4,7 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.1
+' Version : 1.2
 ' ****************************************************************************************************
 
 Sub main()
@@ -36,6 +36,10 @@ Sub main()
     Set swView = swView.GetNextView
     Set swRefModel = swView.ReferencedDocument
 
+    ' Affichage de la fenêtre de chargement
+    frm_Loading.Show vbModeless  ' vbModeless = non bloquant, la macro continue
+    DoEvents
+
     ' Extraction nom du fichier du nom de la feuille
     Dim NomFichier As String
     NomFichier = (VBA.Strings.Left(swModel.GetTitle, InStr(swModel.GetTitle, "-") - 2))
@@ -43,7 +47,7 @@ Sub main()
     ' Demande indice de révision puis ajout date du jour
     Dim Indice_brute As String
     Dim Indice As String
-    'Indice = InputBox("Veuillez saisie l'indice du plan ?", "Indice du plan") 'La variable reçoit la valeur entrée dans l'InputBox
+    ' Indice = InputBox("Veuillez saisie l'indice du plan ?", "Indice du plan") 'La variable reçoit la valeur entrée dans l'InputBox
     Set cusPropMgr = swModel.Extension.CustomPropertyManager("")
     cusPropMgr.Get5 "Révision", False, Indice_brute, Indice, False
     If Indice = "" Then
@@ -52,14 +56,14 @@ Sub main()
        Indice = "-Ind" & Indice & "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
     End If
 
-    'Recherche si le répertoire de destination est créé
+    ' Recherche si le répertoire de destination est créé
     Dim CheminDestination As String
     CheminDestination = "u:\documents\plans"
 
     Dim NomRepertoire As String
     NomRepertoire = RechercheSsRepCommençantPar(CheminDestination, NomFichier)
     
-    'Si le répertoire n'existe pas, création du répertoire avec la désignation de la pièce
+    ' Si le répertoire n'existe pas, création du répertoire avec la désignation de la pièce
     If NomRepertoire = "" Then
         Dim Designation_brute As String
         Dim Designation As String
@@ -73,9 +77,21 @@ Sub main()
     ' Dossier temporaire pour les fichiers avant zip
     Dim CheminTemp As String
     CheminTemp = CheminDestination & "\" & NomRepertoire & "\_temp_export"
+
+    ' SÉCURITÉ : Nettoyage si le dossier temporaire existe déjà (crash précédent)
+    Dim FSO_Init As Object
+    Set FSO_Init = CreateObject("Scripting.FileSystemObject")
+    If FSO_Init.FolderExists(CheminTemp) Then
+        On Error Resume Next ' Au cas où un fichier est verrouillé dans le dossier
+        FSO_Init.DeleteFolder CheminTemp, True
+        On Error GoTo 0
+        Wait 0.5
+    End If
+
+    ' Création du dossier temporaire
     MkDir CheminTemp
 
-    'Sauvegarde sous DXF
+    ' Sauvegarde sous DXF
     longstatus = swModel.SaveAs3(CheminTemp & "\" & NomFichier & Indice & ".dxf", 0, 0)
 
     ' Désactiver l'ouverture automatique du PDF
@@ -85,18 +101,25 @@ Sub main()
         swExportPDFData.ViewPdfAfterSaving = False
     End If
 
-    'Sauvegarde sous PDF
-    'longstatus = swModel.SaveAs3(CheminTemp & "\" & NomFichier & Indice & ".pdf", 0, 0)
+    ' Sauvegarde sous PDF
+    ' longstatus = swModel.SaveAs3(CheminTemp & "\" & NomFichier & Indice & ".pdf", 0, 0)
     Dim errors As Long
     Dim warnings As Long
     bRet = swModel.Extension.SaveAs(CheminTemp & "\" & NomFichier & Indice & ".pdf", 0, 0, swExportPDFData, errors, warnings)
 
-    'Sauvegarde sous STEP
+    ' Sauvegarde sous STEP
     longstatus = swRefModel.SaveAs3(CheminTemp & "\" & NomFichier & Indice & ".STEP", 0, 0)
 
     ' Chemin du fichier ZIP final
     Dim CheminZip As String
-    CheminZip = CheminDestination & "\" & NomRepertoire & "\" & NomRepertoire & ".zip"
+    CheminZip = CheminDestination & "\" & NomRepertoire & "\" & NomFichier & Indice & ".zip"
+
+    ' Dossier Archives
+    Dim CheminArchives As String
+    CheminArchives = CheminDestination & "\" & NomRepertoire & "\Archives"
+
+    ' Archivage des anciens ZIP
+    ArchiverAnciensZip CheminDestination & "\" & NomRepertoire, CheminZip, CheminArchives, NomFichier
 
     ' Création du ZIP
     ZipFiles CheminTemp, CheminZip
@@ -106,8 +129,18 @@ Sub main()
     Set FSO2 = CreateObject("Scripting.FileSystemObject")
     FSO2.DeleteFolder CheminTemp, True
     
-    'Ouverture du dossier contenant
+    ' Ouverture du dossier contenant le ZIP
     Shell "EXPLORER /n,/e," & CheminDestination & "\" & NomRepertoire
+
+    ' Ouverture du fichier PDF dans le ZIP
+    'Shell "explorer.exe """ & CheminZip & "\" & NomFichier & Indice & ".pdf" & """", vbNormalFocus
+
+    ' Fenêtre de fin avec récapitulatif et lien vers le dossier
+    Unload frm_Loading
+    MsgBox "Dossier de lancement généré avec succès !" & vbCrLf & vbCrLf & _
+           NomRepertoire & vbCrLf & _
+           NomFichier & Indice & ".zip", _
+           vbInformation, "Export terminé"
     
 End Sub
 
@@ -154,18 +187,99 @@ Sub ZipFiles(SourceFolder As String, ZipPath As String)
     Dim nbFichiers As Integer
     nbFichiers = oSource.Items.Count
     Do While oZip.Items.Count < nbFichiers
-        Dim dStart As Double
-        dStart = Timer
-        Do While Timer < dStart + 0.2  ' Pause de 200ms
-            DoEvents
-        Loop
+        Wait 200
     Loop
 
     Set oSource = Nothing
     Set oZip = Nothing
     Set oShell = Nothing
 
-    Dim t As Single
-    t = Timer: Do While Timer < t + 1: DoEvents: Loop
+    ' Attendre pour s'assurer que le processus est terminé
+    Wait 500
     
+End Sub
+
+Function EstMemePiece(NomZip As String, NomFichier As String) As Boolean
+    ' Vérifie que le ZIP appartient exactement à NomFichier sans variante
+    ' Format attendu : NomFichier-YYYYMMDD.zip  ou  NomFichier-IndX-YYYYMMDD.zip
+    
+    Dim Prefixe As String
+    Prefixe = NomFichier & "-"
+    
+    ' Le nom doit commencer par NomFichier-
+    If VBA.Strings.Left(NomZip, Len(Prefixe)) <> Prefixe Then
+        EstMemePiece = False
+        Exit Function
+    End If
+    
+    ' On récupère ce qui suit NomFichier-
+    Dim Suite As String
+    Suite = Mid(NomZip, Len(Prefixe) + 1)  ' ex: "20260303.zip" ou "IndA-20260303.zip"
+    
+    ' Cas 1 : NomFichier-YYYYMMDD.zip  → commence par 8 chiffres
+    If EstDate8(VBA.Strings.Left(Suite, 8)) Then
+        EstMemePiece = True
+        Exit Function
+    End If
+    
+    ' Cas 2 : NomFichier-IndX-YYYYMMDD.zip  → commence par "Ind"
+    If VBA.Strings.Left(Suite, 3) = "Ind" Then
+        EstMemePiece = True
+        Exit Function
+    End If
+    
+    ' Sinon : variante (ex: -10-, -GH-) → on ne touche pas
+    EstMemePiece = False
+End Function
+
+Function EstDate8(s As String) As Boolean
+    ' Retourne True si s est une chaîne de 8 chiffres (YYYYMMDD)
+    If Len(s) <> 8 Then EstDate8 = False : Exit Function
+    Dim i As Integer
+    For i = 1 To 8
+        If Mid(s, i, 1) < "0" Or Mid(s, i, 1) > "9" Then
+            EstDate8 = False
+            Exit Function
+        End If
+    Next i
+    EstDate8 = True
+End Function
+
+' Fonction pour archiver les anciens ZIP : si même indice, suppression ; sinon déplacement dans Archives
+Sub ArchiverAnciensZip(DossierPiece As String, NouveauZip As String, DossierArchives As String, NomFichier As String)
+    Dim FSO As Object
+    Set FSO = CreateObject("Scripting.FileSystemObject")
+    Dim oFile As Object
+    For Each oFile In FSO.GetFolder(DossierPiece).Files
+        If LCase(FSO.GetExtensionName(oFile.Name)) = "zip" Then
+            ' On ne touche que les ZIP qui appartiennent à cette pièce
+            If EstMemePiece(oFile.Name, NomFichier) Then
+                If LCase(oFile.Path) = LCase(NouveauZip) Then
+                    ' Même nom = même indice + même date → suppression (sera recréé)
+                    FSO.DeleteFile oFile.Path, True
+                Else
+                    ' Indice précédent → déplacement dans Archives
+                    If Not FSO.FolderExists(DossierArchives) Then
+                        MkDir DossierArchives
+                    End If
+                    Dim Destination As String
+                    Destination = DossierArchives & "\" & oFile.Name
+                    If FSO.FileExists(Destination) Then
+                        FSO.DeleteFile Destination, True
+                    End If
+                    FSO.MoveFile oFile.Path, Destination
+                End If
+            End If
+            ' Sinon : ZIP sans rapport avec la pièce → on ne touche pas
+        End If
+    Next oFile
+End Sub
+
+' Fonction Wait en millisecondes
+Sub Wait(Millis As Double)
+    Dim Fin As Double
+    Fin = Timer + Millis / 1000
+    Do While Timer < Fin
+        DoEvents
+    Loop
 End Sub
