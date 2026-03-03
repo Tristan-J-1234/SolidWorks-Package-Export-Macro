@@ -4,10 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.4
-' ****************************************************************************************************
-' Modifications de la version :
-'   - Début d'implémentation de la gestion des assemblages
+' Version : 1.5
 ' ****************************************************************************************************
 
 Sub main()
@@ -127,8 +124,7 @@ Sub main()
 
     ' Si c'est un assemblage, export des mise en plan des composants de la nomenclature
     If swRefModel.GetType = swDocASSEMBLY Then
-        ' ExporterComposantsMiseEnPlan ...
-        LectureBOM swDraw
+        LectureBOM swDraw, swRefModel
         MsgBox "Assemblage détecté !!!"
     End If
 
@@ -319,13 +315,13 @@ Sub ResoudreAssemblage(ByVal swModel As Object)
 End Sub
 
 ' Fonction pour lire la nomenclature de la mise en plan via la BOM (Bill Of Materials)
-Sub LectureBOM(swDraw As SldWorks.DrawingDoc)
+Sub LectureBOM(swDraw As SldWorks.DrawingDoc, ByVal swRefModel As Object)
     Dim swFeat As SldWorks.Feature
     Dim swBomFeat As SldWorks.BomFeature
     Dim swBomTable As SldWorks.BomTableAnnotation
     Dim ListeComposants As String
     Dim i As Long
-    
+
     ' Recherche de la BOM dans la mise en plan
     Set swFeat = swDraw.FirstFeature
     ' On parcourt les features jusqu'à trouver la BOM (si elle existe)
@@ -345,18 +341,57 @@ Sub LectureBOM(swDraw As SldWorks.DrawingDoc)
     End If
 
     ListeComposants = "Analyse approfondie de la nomenclature :" & vbCrLf & "----------------------------------------" & vbCrLf
-    
+   
     Dim swModelDoc As SldWorks.ModelDoc2
     Dim vCompArr As Variant
-    
+
     ' Parcours de chaque ligne de la BOM
     For i = 1 To swBomTable.RowCount - 1
         vCompArr = swBomTable.GetComponents2(i, "")
         Dim Ligne_Designation As String
-        Ligne_NumPart = swBomTable.Text(i, 0) ' Numéro de pièce
-        Ligne_NumPlan = swBomTable.Text(i, 1) ' Numéro de plan
-        Ligne_Designation = swBomTable.Text(i, 2) ' Désignation
-        ListeComposants = ListeComposants & Ligne_NumPart & " | " & Ligne_NumPlan & " | " & Ligne_Designation & vbCrLf
+        Ligne_NumPart = swBomTable.Text(i, 0) ' Numéro de pièce (ex: 1, 2, 3, etc.)
+        Ligne_NumPlan = swBomTable.Text(i, 1) ' Numéro de plan (ex: 98765432, 98765432-01, 98765432-GH, etc.)
+        Ligne_Designation = swBomTable.Text(i, 2) ' Désignation (ex: "Vis", "Écrou", "Support", etc.)
+        ' Affichage dans une fenêtre de message des informations extraites de la BOM pour chaque composant
+        ListeComposants = ListeComposants & " > Infos : " & Ligne_NumPart & " | " & Ligne_NumPlan & " | " & Ligne_Designation & vbCrLf & " > Chemin : "
+
+        Dim PathTrouve As String
+        PathTrouve = ""
+
+        If Not IsEmpty(vCompArr) Then
+            ' Cas normal : on trouve le composant via la BOM et on récupère son chemin d'accès
+            Set swComp = vCompArr(0)
+            PathTrouve = swComp.GetModelDoc2.GetPathName
+        Else
+            ' Cas de secours : la BOM ne référence pas le composant (ex: composant de sous-assemblage) → on parcourt tous les composants de l'assemblage pour trouver une correspondance avec le numéro de pièce
+            Dim vComponents As Variant
+            Dim k As Long
+            vComponents = swRefModel.GetComponents(False) ' Récupère TOUS les composants de l'Asemblage
+            
+            For k = 0 To UBound(vComponents)
+                Dim swTempComp As SldWorks.Component2
+                Dim swTempModel As SldWorks.ModelDoc2
+                Set swTempComp = vComponents(k)
+                Set swTempModel = swTempComp.GetModelDoc2
+                
+                ' On vérifie que le modèle existe et n'est pas supprimé
+                If Not swTempModel Is Nothing Then
+                    ' On compare le chemin du fichier avec le texte de la nomenclature
+                    If InStr(1, swTempComp.GetModelDoc2.GetPathName, Ligne_NumPlan, vbTextCompare) > 0 Then
+                        PathTrouve = swTempComp.GetModelDoc2.GetPathName
+                        Exit For ' On a trouvé une correspondance, on peut sortir de la boucle
+                    End If
+                End If
+            Next k
+        End If
+
+        If PathTrouve <> "" Then
+            ListeComposants = ListeComposants & PathTrouve & vbCrLf & "----------------------------------------" & vbCrLf
+        Else
+            ListeComposants = ListeComposants & "[ERREUR] Impossible de localiser le fichier" & vbCrLf & "----------------------------------------" & vbCrLf
+        End If
+        ' -----------------------------------------------------------
+        
     Next i
 
     MsgBox ListeComposants
