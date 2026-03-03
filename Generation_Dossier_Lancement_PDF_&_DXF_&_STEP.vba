@@ -4,7 +4,10 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.3
+' Version : 1.4
+' ****************************************************************************************************
+' Modifications de la version :
+'   - Début d'implémentation de la gestion des assemblages
 ' ****************************************************************************************************
 
 Sub main()
@@ -110,8 +113,24 @@ Sub main()
     Dim warnings As Long
     bRet = swModel.Extension.SaveAs(CheminTemp & "\" & NomFichier & Indice & ".pdf", 0, 0, swExportPDFData, errors, warnings)
 
+    ' Modification des préférences d'export STEP pour exporter la géométrie complète de l'assemblage
+    ResoudreAssemblage swRefModel
+    ' AP203 pour ne pas conserver les propriétés personnalisées dans le STEP (couleur, matière, etc.) et ainsi éviter les erreurs d'export sur certains assemblages
+    ' AP214 pour conserver les propriétés personnalisées dans le STEP (couleur, matière, etc.)
+    'swApp.SetUserPreferenceIntegerValue swStepAP, 214
+    swApp.SetUserPreferenceIntegerValue swStepExportPreference, 0
+    ' 0 = Export as tessellated geometry (facettes)
+    ' 1 = Export as solid/surface geometry (géométrie complète)
+
     ' Sauvegarde sous STEP
     longstatus = swRefModel.SaveAs3(CheminTemp & "\" & NomFichier & Indice & ".STEP", 0, 0)
+
+    ' Si c'est un assemblage, export des mise en plan des composants de la nomenclature
+    If swRefModel.GetType = swDocASSEMBLY Then
+        ' ExporterComposantsMiseEnPlan ...
+        LectureBOM swDraw
+        MsgBox "Assemblage détecté !!!"
+    End If
 
     ' Chemin du fichier ZIP final
     Dim CheminZip As String
@@ -285,4 +304,60 @@ Sub Wait(Millis As Double)
     Do While Timer < Fin
         DoEvents
     Loop
+End Sub
+
+' Fonction pour pouvoir rendre tous les composants d'un assemblage "légers" en "résolus" et ainsi éviter les erreurs d'export STEP
+Sub ResoudreAssemblage(ByVal swModel As Object)
+    If Not swModel Is Nothing Then
+        If swModel.GetType = 2 Then ' 2 correspond à swDocASSEMBLY
+            Dim swAssy As Object
+            Set swAssy = swModel
+            ' Force la résolution de tous les composants
+            swAssy.ResolveAllLightweightComponents True
+        End If
+    End If
+End Sub
+
+' Fonction pour lire la nomenclature de la mise en plan via la BOM (Bill Of Materials)
+Sub LectureBOM(swDraw As SldWorks.DrawingDoc)
+    Dim swFeat As SldWorks.Feature
+    Dim swBomFeat As SldWorks.BomFeature
+    Dim swBomTable As SldWorks.BomTableAnnotation
+    Dim ListeComposants As String
+    Dim i As Long
+    
+    ' Recherche de la BOM dans la mise en plan
+    Set swFeat = swDraw.FirstFeature
+    ' On parcourt les features jusqu'à trouver la BOM (si elle existe)
+    Do While Not swFeat Is Nothing
+        If swFeat.GetTypeName2 = "BomFeat" Then
+            Set swBomFeat = swFeat.GetSpecificFeature2
+            Set swBomTable = swBomFeat.GetTableAnnotations(0)
+            Exit Do
+        End If
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+
+    ' Si on n'a pas trouvé de BOM, on arrête la macro et on affiche un message
+    If swBomTable Is Nothing Then
+        MsgBox "Aucune BOM trouvée dans la mise en plan."
+        Exit Sub
+    End If
+
+    ListeComposants = "Analyse approfondie de la nomenclature :" & vbCrLf & "----------------------------------------" & vbCrLf
+    
+    Dim swModelDoc As SldWorks.ModelDoc2
+    Dim vCompArr As Variant
+    
+    ' Parcours de chaque ligne de la BOM
+    For i = 1 To swBomTable.RowCount - 1
+        vCompArr = swBomTable.GetComponents2(i, "")
+        Dim Ligne_Designation As String
+        Ligne_NumPart = swBomTable.Text(i, 0) ' Numéro de pièce
+        Ligne_NumPlan = swBomTable.Text(i, 1) ' Numéro de plan
+        Ligne_Designation = swBomTable.Text(i, 2) ' Désignation
+        ListeComposants = ListeComposants & Ligne_NumPart & " | " & Ligne_NumPlan & " | " & Ligne_Designation & vbCrLf
+    Next i
+
+    MsgBox ListeComposants
 End Sub
