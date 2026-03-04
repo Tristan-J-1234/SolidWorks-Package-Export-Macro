@@ -4,7 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.8
+' Version : 1.9
 ' ****************************************************************************************************
 
 Sub main()
@@ -143,18 +143,18 @@ Sub main()
             CheminArchives = CheminDestination & "\" & NomRepertoire & "\Archives"
 
             ' Archivage des anciens ZIP
-            'ArchiverAnciensZip CheminDestination & "\" & NomRepertoire, CheminZip, CheminArchives, NomFichier
+            ArchiverAnciensZip CheminDestination & "\" & NomRepertoire, CheminZip, CheminArchives, NomFichier
 
             ' Création du ZIP
-            'ZipFiles CheminTemp, CheminZip
+            ZipFiles CheminTemp, CheminZip
 
             ' Suppression du dossier temporaire
             Dim FSO2 As Object
             Set FSO2 = CreateObject("Scripting.FileSystemObject")
-            'FSO2.DeleteFolder CheminTemp, True
+            FSO2.DeleteFolder CheminTemp, True
 
             ' Ouverture du dossier contenant le ZIP
-            'Shell "EXPLORER /n,/e," & CheminDestination & "\" & NomRepertoire
+            Shell "EXPLORER /n,/e," & CheminDestination & "\" & NomRepertoire
 
             ' Ouverture du fichier PDF dans le ZIP
             'Shell "explorer.exe """ & CheminZip & "\" & NomFichier & Indice & ".pdf" & """", vbNormalFocus
@@ -333,7 +333,7 @@ Sub LectureBOM(swDraw As SldWorks.DrawingDoc, Byval swRefModel As Object, Chemin
 
     ' Export CSV
     Dim CheminCSV As String
-    CheminCSV = Environ("TEMP") & "\diagnostic_bom.csv"
+    CheminCSV = Environ("TEMP") & "\diagnostic_bom_" & VBA.Strings.Format(Now, "YYYY_MM_DD_HH_MM_SS") & ".csv"
     Dim iCSV As Integer
     iCSV = FreeFile
     Open CheminCSV For Output As #iCSV
