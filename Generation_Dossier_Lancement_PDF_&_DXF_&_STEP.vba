@@ -4,7 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.6
+' Version : 1.7
 ' ****************************************************************************************************
 
 Sub main()
@@ -129,7 +129,7 @@ Sub main()
             ' Si c'est un assemblage, export des mise en plan des composants de la nomenclature
             If swRefModel.GetType = swDocASSEMBLY Then
                 ' MsgBox "Cette pièce est un assemblage, la macro va maintenant analyser la nomenclature pour tenter de localiser les composants." & vbCrLf & vbCrLf
-                
+
                 ' Lecture de la nomenclature via la BOM (Bill Of Materials) de la mise en plan
                 LectureBOM swDraw, swRefModel, CheminPlan
             End If
@@ -321,141 +321,138 @@ Sub ResoudreAssemblage(Byval swModel As Object)
 End Sub
 
 ' Fonction pour lire la nomenclature de la mise en plan via la BOM (Bill Of Materials)
-Sub LectureBOM(swDraw As SldWorks.DrawingDoc, Byval swRefModel As Object, CheminPlan As String)
-    Dim swFeat As SldWorks.Feature
-    Dim swBomFeat As SldWorks.BomFeature
-    Dim swBomTable As SldWorks.BomTableAnnotation
-    Dim ListeComposants As String
+Sub LectureBOM(swDraw As SldWorks.DrawingDoc, ByVal swRefModel As Object, CheminPlan As String)
+    Dim swFeat      As SldWorks.Feature
+    Dim swBomFeat   As SldWorks.BomFeature
+    Dim swBomTable  As SldWorks.BomTableAnnotation
     Dim i As Long
 
     ' Recherche de la BOM dans la mise en plan
     Set swFeat = swDraw.FirstFeature
-    ' On parcourt les features jusqu'à trouver la BOM (si elle existe)
     Do While Not swFeat Is Nothing
         If swFeat.GetTypeName2 = "BomFeat" Then
             Set swBomFeat = swFeat.GetSpecificFeature2
             Set swBomTable = swBomFeat.GetTableAnnotations(0)
-         Exit Do
+            Exit Do
         End If
         Set swFeat = swFeat.GetNextFeature
     Loop
 
-    ' Si on n'a pas trouvé de BOM, on arrête la macro et on affiche un message
     If swBomTable Is Nothing Then
         MsgBox "Aucune BOM trouvée dans la mise en plan."
-     Exit Sub
+        Exit Sub
     End If
 
-    ListeComposants = "Analyse approfondie de la nomenclature :" & vbCrLf & "----------------------------------------" & vbCrLf
+    ' Indexation unique de tous les SLDDRW
+    Dim IndexDRW As Collection
+    Set IndexDRW = IndexerSLDDRW(CheminPlan)
 
-    Dim swModelDoc As SldWorks.ModelDoc2
-    Dim vCompArr As Variant
-
-    ' Parcours de chaque ligne de la BOM
-    For i = 1 To swBomTable.RowCount - 1
-        vCompArr = swBomTable.GetComponents2(i, "")
-        Dim Ligne_NumPart As String
-        Dim Ligne_NumPlan As String
-        Dim Ligne_Designation As String
-        Ligne_NumPart = swBomTable.Text(i, 0) ' Numéro de pièce (ex: 1, 2, 3, etc.)
-        Ligne_NumPlan = swBomTable.Text(i, 1) ' Numéro de plan (ex: 98765432, 98765432-01, 98765432-GH, etc.)
-        Ligne_Designation = swBomTable.Text(i, 2) ' Désignation (ex: "Vis", "Écrou", "Support", etc.)
-        ' Affichage dans une fenêtre de message des informations extraites de la BOM pour chaque composant
-        ListeComposants = ListeComposants & " > Infos : " & Ligne_NumPart & " | " & Ligne_NumPlan & " | " & Ligne_Designation & vbCrLf & " > Chemin : "
-
-        ' Recherche directe du SLDDRW par le numéro de plan dans u:\documents\plans
-        Dim CheminDRW As String
-        CheminDRW = TrouverSLDDRW(CheminPlan, Ligne_NumPlan)
-
-        If CheminDRW <> "" Then
-            ListeComposants = ListeComposants & "Recherché : """ & Ligne_NumPlan & ".SLDDRW""" & vbCrLf & _
-                              "Trouvé : " & CheminDRW & vbCrLf & _
-                              "----------------------------------------" & vbCrLf
-        Else
-            ListeComposants = ListeComposants & "Recherché : """ & Ligne_NumPlan & ".SLDDRW""" & vbCrLf & _
-                              "[INTROUVABLE]" & vbCrLf & _
-                              "----------------------------------------" & vbCrLf
-        End If
-
-    Next i
-
-    ' Export CSV des résultats
+    ' Export CSV
     Dim CheminCSV As String
     CheminCSV = Environ("TEMP") & "\diagnostic_bom.csv"
     Dim iCSV As Integer
     iCSV = FreeFile
     Open CheminCSV For Output As #iCSV
     Print #iCSV, "Num;Numero Plan;Designation;Chemin SLDDRW"
-    
-    Dim ligneCSV As String
-    Dim j As Long
-    For j = 1 To swBomTable.RowCount - 1
-        Dim csv_NumPart As String
-        Dim csv_NumPlan As String
-        Dim csv_Designation As String
+
+    Dim Introuvables As String
+    Introuvables = ""
+
+    For i = 1 To swBomTable.RowCount - 1
+        Dim Ligne_NumPart   As String
+        Dim Ligne_NumPlan   As String
+        Dim Ligne_Design    As String
+        Dim CheminDRW       As String
+        Ligne_NumPart   = swBomTable.Text(i, 0)
+        Ligne_NumPlan   = swBomTable.Text(i, 1)
+        Ligne_Design    = swBomTable.Text(i, 2)
+        CheminDRW       = TrouverDansIndex(IndexDRW, Ligne_NumPlan)
+
+        ' CSV
         Dim csv_Chemin As String
-        csv_NumPart = swBomTable.Text(j, 0)
-        csv_NumPlan = swBomTable.Text(j, 1)
-        csv_Designation = swBomTable.Text(j, 2)
-        csv_Chemin = TrouverSLDDRW(CheminPlan, csv_NumPlan)
-        If csv_Chemin = "" Then csv_Chemin = "[INTROUVABLE]"
-        ligneCSV = csv_NumPart & ";" & csv_NumPlan & ";" & csv_Designation & ";" & csv_Chemin
-        Print #iCSV, ligneCSV
-    Next j
-    
+        If CheminDRW = "" Then
+            csv_Chemin = "[INTROUVABLE]"
+            Introuvables = Introuvables & "  " & Ligne_NumPart & " | " & Ligne_NumPlan & " | " & Ligne_Design & vbCrLf
+        Else
+            csv_Chemin = CheminDRW
+        End If
+        Print #iCSV, Ligne_NumPart & ";" & Ligne_NumPlan & ";" & Ligne_Design & ";" & csv_Chemin
+    Next i
+
     Close #iCSV
-    
+
     ' Ouvrir le CSV automatiquement
     Shell "explorer.exe """ & CheminCSV & """", vbNormalFocus
     Wait 1000
 
-    MsgBox ListeComposants
+    ' MsgBox : uniquement les introuvables
+    If Introuvables = "" Then
+        MsgBox "Tous les fichiers SLDDRW ont été trouvés.", vbInformation, "Résultat BOM"
+    Else
+        MsgBox "Fichiers SLDDRW introuvables :" & vbCrLf & "----------------------------------------" & vbCrLf & Introuvables, _
+               vbExclamation, "Résultat BOM"
+    End If
+
 End Sub
 
-' Cherche un fichier NumeroPlan.SLDDRW dans les sous-dossiers de CheminPlan
-Function TrouverSLDDRW(CheminPlan As String, NumeroPlan As String) As String
-    Dim NomCible As String
-    Dim ResultatFichier As String
+' À appeler UNE SEULE FOIS au début pour indexer tous les SLDDRW
+Function IndexerSLDDRW(CheminPlan As String) As Collection
     Dim FSO As Object
-    Dim wsh As Object
-    Dim Commande As String
+    Dim oShell As Object
+    Dim ResultatFichier As String
+    Dim col As New Collection
 
     Set FSO = CreateObject("Scripting.FileSystemObject")
-    Set wsh = CreateObject("WScript.Shell")
-    
-    NomCible = NumeroPlan & ".SLDDRW"
+    Set oShell = CreateObject("WScript.Shell")
 
-    ' Fichier temporaire pour stocker le résultat de la recherche
-    ResultatFichier = Environ("TEMP") & "\recherche_drw.txt"
+    ResultatFichier = Environ("TEMP") & "\index_drw.txt"
 
-    ' Suppression du fichier temp AVANT la recherche pour éviter de lire un ancien résultat
     If FSO.FileExists(ResultatFichier) Then
         On Error Resume Next
         FSO.DeleteFile ResultatFichier
-        On Error GoTo 0
-        Wait 500
-    End If
-
-    ' Commande DIR récursive, bien plus rapide qu'une recherche VBA dossier par dossier
-    Shell "cmd /c dir """ & CheminPlan & "\" & NomCible & """ /s /b > """ & ResultatFichier & """ 2>nul", vbHide
-
-    ' Attendre que la commande se termine
-    Wait 3000
-
-    ' Lire le résultat
-    If FSO.FileExists(ResultatFichier) Then
-        Dim iFile As Integer
-        iFile = FreeFile
-        Dim Ligne As String
-        Open ResultatFichier For Input As #iFile
-        If Not EOF(iFile) Then
-            Line Input #iFile, Ligne
-            TrouverSLDDRW = Trim(Ligne)
+        On Error Goto 0
         End If
-        Close #iFile
-        On Error Resume Next
-        FSO.DeleteFile ResultatFichier
-        On Error GoTo 0
-    End If
 
+        ' Un seul DIR pour tous les SLDDRW d'un coup
+        oShell.Run "cmd /c dir """ & CheminPlan & "\*.SLDDRW"" /s /b > """ & ResultatFichier & """ 2>nul", _
+        0, True
+
+        ' Charger tous les chemins en mémoire dans une Collection
+        If FSO.FileExists(ResultatFichier) Then
+            Dim iFile As Integer
+            iFile = FreeFile
+                Dim Ligne As String
+                Open ResultatFichier For Input As #iFile
+                Do While Not EOF(iFile)
+                    Line Input #iFile, Ligne
+                    Ligne = Trim(Ligne)
+                    If Ligne <> "" Then
+                        If InStr(1, Ligne, "archive", vbTextCompare) = 0 Then
+                            Dim Cle As String
+                            Cle = LCase(FSO.GetFileName(Ligne))
+                            On Error Resume Next
+                            col.Add Ligne, Cle
+                            If Err.Number <> 0 Then
+                                Err.Clear
+                            End If
+                            On Error Goto 0
+                            End If
+                        End If
+                    Loop
+                    Close #iFile
+                    On Error Resume Next
+                    FSO.DeleteFile ResultatFichier
+                    On Error Goto 0
+                    End If
+
+                    Set IndexerSLDDRW = col
+End Function
+
+' Cherche dans l'index déjà chargé en mémoire — instantané
+Function TrouverDansIndex(Index As Collection, NumeroPlan As String) As String
+    Dim NomCible As String
+    NomCible = LCase(NumeroPlan & ".slddrw")
+    On Error Resume Next
+    TrouverDansIndex = Index(NomCible)
+    On Error Goto 0
 End Function
