@@ -4,7 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.11
+' Version : 1.12
 ' ****************************************************************************************************
 
 Sub main()
@@ -565,15 +565,25 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     ' Chercher une table weldment via les vues
                     Dim swViewSub As SldWorks.View
                     Dim vAnnotsSub As Variant
+                    Dim oTableWeld As Object
                     Set swViewSub = swDrawSub.GetFirstView
                     Do While Not swViewSub Is Nothing
                         vAnnotsSub = swViewSub.GetTableAnnotations
                         If Not IsEmpty(vAnnotsSub) And Not IsNull(vAnnotsSub) Then
-                            Dim oTableWeld As Object
-                            Set oTableWeld = vAnnotsSub(0)
-                            ' Récursion sur la table weldment
-                            TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables
-                            Exit Do
+                            Dim j As Long
+                            For j = 0 To UBound(vAnnotsSub)
+                                Dim oTSub As Object
+                                Set oTSub = vAnnotsSub(j)
+                                Dim tTypeSub As Long
+                                On Error Resume Next
+                                tTypeSub = oTSub.TableType
+                                On Error GoTo 0
+                                If tTypeSub = 3 Then  ' Weldment uniquement
+                                    Set oTableWeld = oTSub
+                                    TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables
+                                    Exit For
+                                End If
+                            Next j
                         End If
                         Set swViewSub = swViewSub.GetNextView
                     Loop
@@ -590,7 +600,7 @@ End Sub
 
 ' Extrait la TableAnnotation d'un DrawingDoc (BOM standard ou weldment)
 Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
-    ' Chercher BOM standard
+    ' Chercher BOM standard en priorité
     Dim swFeat As SldWorks.Feature
     Set swFeat = swDraw.FirstFeature
     Do While Not swFeat Is Nothing
@@ -603,15 +613,29 @@ Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
         Set swFeat = swFeat.GetNextFeature
     Loop
 
-    ' Sinon chercher weldment
+    ' Sinon chercher weldment uniquement (type 10)
+    ' swTableAnnotation_e : 0=General, 1=BOM, 2=Revision, 3=Weldment, 4=HoleChart, etc.
     Dim swView As SldWorks.View
     Dim vAnnots As Variant
     Set swView = swDraw.GetFirstView
     Do While Not swView Is Nothing
         vAnnots = swView.GetTableAnnotations
         If Not IsEmpty(vAnnots) And Not IsNull(vAnnots) Then
-            Set ObtenirTable = vAnnots(0)
-            Exit Function
+            Dim i As Long
+            For i = 0 To UBound(vAnnots)
+                Dim oT As Object
+                Set oT = vAnnots(i)
+                ' TableType : 0=General, 1=BOM, 2=Revision, 3=Weldment cutlist, 4=HoleChart
+                Dim tType As Long
+                On Error Resume Next
+                tType = oT.TableType
+                On Error GoTo 0
+                ' On accepte uniquement Weldment (3) — pas Revision (2) ni HoleChart (4)
+                If tType = 3 Then
+                    Set ObtenirTable = oT
+                    Exit Function
+                End If
+            Next i
         End If
         Set swView = swView.GetNextView
     Loop
