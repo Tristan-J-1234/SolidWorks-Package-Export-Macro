@@ -4,7 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.12
+' Version : 1.13
 ' ****************************************************************************************************
 
 Sub main()
@@ -135,7 +135,7 @@ Sub main()
                 Dim CheminCSV_BOM   As String
                 Dim Introuvables_BOM As String
                 Dim BOM_Trouvee As Boolean
-                BOM_Trouvee = LectureBOM(swApp, swDraw, swRefModel, CheminPlan, CheminCSV_BOM, Introuvables_BOM)
+                BOM_Trouvee = LectureBOM(swApp, swDraw, swRefModel, CheminPlan, CheminTemp, CheminCSV_BOM, Introuvables_BOM)
             End If
 
             ' Chemin du fichier ZIP final
@@ -344,7 +344,7 @@ Sub ResoudreAssemblage(Byval swModel As Object)
 End Sub
 
 ' Fonction pour lire la nomenclature de la mise en plan via la BOM (Bill Of Materials)
-Function LectureBOM(swApp As SldWorks.SldWorks, swDraw As SldWorks.DrawingDoc, ByVal swRefModel As Object, CheminPlan As String, ByRef CheminCSV_Out As String, ByRef Introuvables_Out As String) As Boolean
+Function LectureBOM(swApp As SldWorks.SldWorks, swDraw As SldWorks.DrawingDoc, ByVal swRefModel As Object, CheminPlan As String, CheminTemp As String, ByRef CheminCSV_Out As String, ByRef Introuvables_Out As String) As Boolean
 
     ' Indexation unique de tous les SLDDRW
     Dim IndexDRW As Collection
@@ -375,7 +375,7 @@ Function LectureBOM(swApp As SldWorks.SldWorks, swDraw As SldWorks.DrawingDoc, B
     End If
 
     ' Traitement récursif
-    TraiterLignesTable swApp, oTableRacine, IndexDRW, iCSV, DejaTraites, Introuvables
+    TraiterLignesTable swApp, oTableRacine, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTemp
 
     Close #iCSV
     CheminCSV_Out = CheminCSV
@@ -466,7 +466,8 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                        IndexDRW As Collection, _
                        iCSV As Integer, _
                        DejaTraites As Collection, _
-                       ByRef Introuvables As String)
+                       ByRef Introuvables As String, _
+                       CheminTemp As String)
 
     ' Vérification défensive avant d'utiliser la table
     If oTable Is Nothing Then Exit Sub
@@ -530,18 +531,22 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
 
         ' Si le SLDDRW existe, l'ouvrir et vérifier s'il contient une BOM
         If CheminDRW <> "" Then
-            Dim swDrawSub   As SldWorks.DrawingDoc
-            Dim swDocSpec   As SldWorks.DocumentSpecification
 
-            swApp.DocumentVisible False, swDocDRAWING
-            Set swDocSpec = swApp.GetOpenDocSpec(CheminDRW)
-            swDocSpec.DocumentType = swDocDRAWING
-            swDocSpec.Silent = True
-            swDocSpec.ReadOnly = True
-            Set swDrawSub = swApp.OpenDoc7(swDocSpec)
-            swApp.DocumentVisible True, swDocDRAWING
+            Dim lErr As Long, lWarn As Long
+            Set swDrawSub = swApp.OpenDoc6(CheminDRW, swDocDRAWING, swOpenDocOptions_Silent, "", lErr, lWarn)
 
             If Not swDrawSub Is Nothing Then
+
+                ' Export PDF du composant
+                Dim swPDFData As SldWorks.ExportPdfData
+                Set swPDFData = swApp.GetExportFileData(1)
+                If Not swPDFData Is Nothing Then swPDFData.ViewPdfAfterSaving = False
+                Dim lE As Long, lW As Long
+                swDrawSub.Extension.SaveAs CheminTemp & "\" & NumPlan & ".pdf", 0, 0, swPDFData, lE, lW
+
+                ' Export DXF du composant
+                swDrawSub.SaveAs3 CheminTemp & "\" & NumPlan & ".dxf", 0, 0
+
                 ' Chercher une BOM standard
                 Dim swFeatSub   As SldWorks.Feature
                 Dim swBomSub    As SldWorks.BomFeature
@@ -560,7 +565,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     ' Récursion sur la BOM standard
                     Dim oTableStd As Object
                     Set oTableStd = swTableSub
-                    TraiterLignesTable swApp, oTableStd, IndexDRW, iCSV, DejaTraites, Introuvables
+                    TraiterLignesTable swApp, oTableStd, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTemp
                 Else
                     ' Chercher une table weldment via les vues
                     Dim swViewSub As SldWorks.View
@@ -580,7 +585,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                                 On Error GoTo 0
                                 If tTypeSub = 3 Then  ' Weldment uniquement
                                     Set oTableWeld = oTSub
-                                    TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables
+                                    TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTemp
                                     Exit For
                                 End If
                             Next j
