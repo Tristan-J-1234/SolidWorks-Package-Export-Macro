@@ -4,7 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.9
+' Version : 1.10
 ' ****************************************************************************************************
 
 Sub main()
@@ -66,6 +66,7 @@ Sub main()
         ' Chemin du dossier contenant les plans (pour la recherche des SLDDRW des composants de la nomenclature)
         Dim CheminPlan As String
         CheminPlan = "I:\Thomas plans"
+        ' CHeminPlan = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks"
 
         Dim NomRepertoire As String
         NomRepertoire = RechercheSsRepCommençantPar(CheminDestination, NomFichier)
@@ -131,7 +132,10 @@ Sub main()
                 ' MsgBox "Cette pièce est un assemblage, la macro va maintenant analyser la nomenclature pour tenter de localiser les composants." & vbCrLf & vbCrLf
 
                 ' Lecture de la nomenclature via la BOM (Bill Of Materials) de la mise en plan
-                LectureBOM swDraw, swRefModel, CheminPlan
+                Dim CheminCSV_BOM   As String
+                Dim Introuvables_BOM As String
+                Dim BOM_Trouvee As Boolean
+                BOM_Trouvee = LectureBOM(swApp, swDraw, swRefModel, CheminPlan, CheminCSV_BOM, Introuvables_BOM)
             End If
 
             ' Chemin du fichier ZIP final
@@ -159,12 +163,31 @@ Sub main()
             ' Ouverture du fichier PDF dans le ZIP
             'Shell "explorer.exe """ & CheminZip & "\" & NomFichier & Indice & ".pdf" & """", vbNormalFocus
 
-            ' Fenêtre de fin avec récapitulatif et lien vers le dossier
+            ' Ouverture du CSV et affichage des résultats BOM en fin de macro
+            If BOM_Trouvee Then
+                Shell "explorer.exe """ & CheminCSV_BOM & """", vbNormalFocus
+                Wait 1000
+            End If
+
             Unload frm_Loading
-            MsgBox "Dossier de lancement généré avec succès !" & vbCrLf & vbCrLf & _
-            NomRepertoire & vbCrLf & _
-            NomFichier & Indice & ".zip", _
-            vbInformation, "Export terminé"
+
+            ' MsgBox finale groupée
+            Dim MsgFinale As String
+            MsgFinale = "Dossier de lancement généré avec succès !" & vbCrLf & vbCrLf & _
+                        NomRepertoire & vbCrLf & _
+                        NomFichier & Indice & ".zip"
+
+            If BOM_Trouvee Then
+                If Introuvables_BOM = "" Then
+                    MsgFinale = MsgFinale & vbCrLf & vbCrLf & "✔ Tous les fichiers SLDDRW ont été trouvés."
+                Else
+                    MsgFinale = MsgFinale & vbCrLf & vbCrLf & "⚠ Fichiers SLDDRW introuvables :" & vbCrLf & Introuvables_BOM
+                End If
+            ElseIf swRefModel.GetType = swDocASSEMBLY Or ContientBOM(swDraw) Then
+                MsgFinale = MsgFinale & vbCrLf & vbCrLf & "⚠ Aucune nomenclature trouvée dans la mise en plan."
+            End If
+
+            MsgBox MsgFinale, vbInformation, "Export terminé"
 
 End Sub
 
@@ -321,17 +344,13 @@ Sub ResoudreAssemblage(Byval swModel As Object)
 End Sub
 
 ' Fonction pour lire la nomenclature de la mise en plan via la BOM (Bill Of Materials)
-Sub LectureBOM(swDraw As SldWorks.DrawingDoc, Byval swRefModel As Object, CheminPlan As String)
-    Dim swFeat      As SldWorks.Feature
-    Dim swBomFeat   As SldWorks.BomFeature
-    Dim swBomTable  As SldWorks.BomTableAnnotation
-    Dim i As Long
+Function LectureBOM(swApp As SldWorks.SldWorks, swDraw As SldWorks.DrawingDoc, ByVal swRefModel As Object, CheminPlan As String, ByRef CheminCSV_Out As String, ByRef Introuvables_Out As String) As Boolean
 
     ' Indexation unique de tous les SLDDRW
     Dim IndexDRW As Collection
     Set IndexDRW = IndexerSLDDRW(CheminPlan)
 
-    ' Export CSV
+    ' Préparation CSV
     Dim CheminCSV As String
     CheminCSV = Environ("TEMP") & "\diagnostic_bom_" & VBA.Strings.Format(Now, "YYYY_MM_DD_HH_MM_SS") & ".csv"
     Dim iCSV As Integer
@@ -342,96 +361,27 @@ Sub LectureBOM(swDraw As SldWorks.DrawingDoc, Byval swRefModel As Object, Chemin
     Dim Introuvables As String
     Introuvables = ""
 
-    ' CAS 1 : BOM standard (assemblage)
-    ' Recherche de la BOM dans la mise en plan
-    Set swFeat = swDraw.FirstFeature
-    Do While Not swFeat Is Nothing
-        If swFeat.GetTypeName2 = "BomFeat" Then
-            Set swBomFeat = swFeat.GetSpecificFeature2
-            Set swBomTable = swBomFeat.GetTableAnnotations(0)
-         Exit Do
-        End If
-        Set swFeat = swFeat.GetNextFeature
-    Loop
+    ' Collection pour éviter les doublons/boucles infinies
+    Dim DejaTraites As New Collection
 
-    If Not swBomTable Is Nothing Then
-        For i = 1 To swBomTable.RowCount - 1
-            Dim Ligne_NumPart   As String
-            Dim Ligne_NumPlan   As String
-            Dim Ligne_Design    As String
-            Dim CheminDRW       As String
-            Ligne_NumPart = swBomTable.Text(i, 0)
-            Ligne_NumPlan = swBomTable.Text(i, 1)
-            Ligne_Design  = swBomTable.Text(i, 2)
-            CheminDRW     = TrouverDansIndex(IndexDRW, Ligne_NumPlan)
+    ' Obtenir la table racine
+    Dim oTableRacine As Object
+    Set oTableRacine = ObtenirTable(swDraw)
 
-            Dim csv_Chemin As String
-            If CheminDRW = "" Then
-                csv_Chemin = "[INTROUVABLE]"
-                Introuvables = Introuvables & "  " & Ligne_NumPart & " | " & Ligne_NumPlan & " | " & Ligne_Design & vbCrLf
-            Else
-                csv_Chemin = CheminDRW
-            End If
-            Print #iCSV, Ligne_NumPart & ";" & Ligne_NumPlan & ";" & Ligne_Design & ";" & csv_Chemin
-        Next i
-        Goto FinBOM
-        End If
+    If oTableRacine Is Nothing Then
+        Close #iCSV
+        LectureBOM = False
+        Exit Function
+    End If
 
-        ' CAS 2 : Table weldment (pièce soudée)
-        ' Recherche de la table weldment dans la mise en plan
-        Dim swViewW  As SldWorks.View
-        Dim vAnnotsW As Variant
-        Set swViewW = swDraw.GetFirstView
-        Do While Not swViewW Is Nothing
-            vAnnotsW = swViewW.GetTableAnnotations
-            If Not IsEmpty(vAnnotsW) And Not IsNull(vAnnotsW) Then
-                Dim oTableW As SldWorks.TableAnnotation
-                Set oTableW = vAnnotsW(0)
-                Dim r As Long
-                For r = 1 To oTableW.RowCount - 1
-                    Dim w_NumPart   As String
-                    Dim w_NumPlan   As String
-                    Dim w_Design    As String
-                    Dim w_CheminDRW As String
-                    w_NumPart = Trim(oTableW.Text(r, 0))
-                    w_NumPlan = Trim(oTableW.Text(r, 1))
-                    w_Design  = Trim(oTableW.Text(r, 2))
-                    If w_NumPlan = "" Then Goto SuiteWeld
-                        w_CheminDRW = TrouverDansIndex(IndexDRW, w_NumPlan)
-                        Dim w_csv As String
-                        If w_CheminDRW = "" Then
-                            w_csv = "[INTROUVABLE]"
-                            Introuvables = Introuvables & "  " & w_NumPart & " | " & w_NumPlan & " | " & w_Design & vbCrLf
-                        Else
-                            w_csv = w_CheminDRW
-                        End If
-                        Print #iCSV, w_NumPart & ";" & w_NumPlan & ";" & w_Design & ";" & w_csv
- SuiteWeld:
-                    Next r
-                    Goto FinBOM
-                    End If
-                    Set swViewW = swViewW.GetNextView
-                Loop
+    ' Traitement récursif
+    TraiterLignesTable swApp, oTableRacine, IndexDRW, iCSV, DejaTraites, Introuvables
 
-                ' Aucune table trouvée
-                Close #iCSV
-                MsgBox "Aucune nomenclature trouvée dans la mise en plan."
-             Exit Sub
-
-                ' ---------------------------------------------------------------
- FinBOM:
-                Close #iCSV
-                Shell "explorer.exe """ & CheminCSV & """", vbNormalFocus
-                Wait 1000
-
-                If Introuvables = "" Then
-                    MsgBox "Tous les fichiers SLDDRW ont été trouvés.", vbInformation, "Résultat BOM"
-                Else
-                    MsgBox "Fichiers SLDDRW introuvables :" & vbCrLf & "----------------------------------------" & vbCrLf & Introuvables, _
-                    vbExclamation, "Résultat BOM"
-                End If
-
-End Sub
+    Close #iCSV
+    CheminCSV_Out = CheminCSV
+    Introuvables_Out = Introuvables
+    LectureBOM = True
+End Function
 
 ' À appeler UNE SEULE FOIS au début pour indexer tous les SLDDRW
 Function IndexerSLDDRW(CheminPlan As String) As Collection
@@ -508,4 +458,174 @@ Function ContientBOM(swDraw As SldWorks.DrawingDoc) As Boolean
         Set swFeat = swFeat.GetNextFeature
     Loop
     ContientBOM = False
+End Function
+
+' Fonction récursive principale — appelée par LectureBOM et par elle-même
+Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
+                       oTable As Object, _
+                       IndexDRW As Collection, _
+                       iCSV As Integer, _
+                       DejaTraites As Collection, _
+                       ByRef Introuvables As String)
+
+    ' Vérification défensive avant d'utiliser la table
+    If oTable Is Nothing Then Exit Sub
+    
+    Dim NbLignes As Long
+    On Error Resume Next
+    NbLignes = oTable.RowCount
+    If Err.Number <> 0 Then
+        Err.Clear
+        On Error GoTo 0
+        Exit Sub  ' L'objet ne supporte pas RowCount → ce n'est pas une table valide
+    End If
+    On Error GoTo 0
+
+    Dim r As Long
+    For r = 1 To NbLignes - 1
+        Dim NumPart  As String
+        Dim NumPlan  As String
+        Dim Design   As String
+        NumPart = Trim(oTable.Text(r, 0))
+        NumPlan = Trim(oTable.Text(r, 1))
+        Design  = Trim(oTable.Text(r, 2))
+
+        ' Nettoyer les retours à la ligne dans les cellules (désignations sur plusieurs lignes)
+        NumPlan = Join(Split(NumPlan, vbCrLf), " ")
+        NumPlan = Join(Split(NumPlan, vbLf), " ")
+        Design  = Join(Split(Design, vbCrLf), " ")
+        Design  = Join(Split(Design, vbLf), " ")
+
+        ' Ignorer les lignes vides ou invalides (cartouche, en-têtes parasites)
+        If NumPlan = "" Then GoTo Suite
+        If Not EstNumeroPlanValide(NumPlan) Then GoTo Suite
+
+        ' Ignorer si déjà traité (évite les boucles infinies)
+        Dim DejaVu As Boolean
+        DejaVu = False
+        On Error Resume Next
+        Dim test As String
+        test = DejaTraites(LCase(NumPlan))
+        If Err.Number = 0 Then DejaVu = True
+        Err.Clear
+        On Error GoTo 0
+        If DejaVu Then GoTo Suite
+
+        ' Marquer comme traité
+        DejaTraites.Add NumPlan, LCase(NumPlan)
+
+        ' Chercher le SLDDRW
+        Dim CheminDRW As String
+        CheminDRW = TrouverDansIndex(IndexDRW, NumPlan)
+
+        Dim csv_Chemin As String
+        If CheminDRW = "" Then
+            csv_Chemin = "[INTROUVABLE]"
+            Introuvables = Introuvables & "  " & NumPart & " | " & NumPlan & " | " & Design & vbCrLf
+        Else
+            csv_Chemin = CheminDRW
+        End If
+        
+        Print #iCSV, NumPart & ";" & Chr(34) & NumPlan & Chr(34) & ";" & Design & ";" & csv_Chemin
+
+        ' Si le SLDDRW existe, l'ouvrir et vérifier s'il contient une BOM
+        If CheminDRW <> "" Then
+            Dim swDrawSub   As SldWorks.DrawingDoc
+            Dim swDocSpec   As SldWorks.DocumentSpecification
+
+            swApp.DocumentVisible False, swDocDRAWING
+            Set swDocSpec = swApp.GetOpenDocSpec(CheminDRW)
+            swDocSpec.DocumentType = swDocDRAWING
+            swDocSpec.Silent = True
+            swDocSpec.ReadOnly = True
+            Set swDrawSub = swApp.OpenDoc7(swDocSpec)
+            swApp.DocumentVisible True, swDocDRAWING
+
+            If Not swDrawSub Is Nothing Then
+                ' Chercher une BOM standard
+                Dim swFeatSub   As SldWorks.Feature
+                Dim swBomSub    As SldWorks.BomFeature
+                Dim swTableSub  As SldWorks.BomTableAnnotation
+                Set swFeatSub = swDrawSub.FirstFeature
+                Do While Not swFeatSub Is Nothing
+                    If swFeatSub.GetTypeName2 = "BomFeat" Then
+                        Set swBomSub = swFeatSub.GetSpecificFeature2
+                        Set swTableSub = swBomSub.GetTableAnnotations(0)
+                        Exit Do
+                    End If
+                    Set swFeatSub = swFeatSub.GetNextFeature
+                Loop
+
+                If Not swTableSub Is Nothing Then
+                    ' Récursion sur la BOM standard
+                    Dim oTableStd As Object
+                    Set oTableStd = swTableSub
+                    TraiterLignesTable swApp, oTableStd, IndexDRW, iCSV, DejaTraites, Introuvables
+                Else
+                    ' Chercher une table weldment via les vues
+                    Dim swViewSub As SldWorks.View
+                    Dim vAnnotsSub As Variant
+                    Set swViewSub = swDrawSub.GetFirstView
+                    Do While Not swViewSub Is Nothing
+                        vAnnotsSub = swViewSub.GetTableAnnotations
+                        If Not IsEmpty(vAnnotsSub) And Not IsNull(vAnnotsSub) Then
+                            Dim oTableWeld As Object
+                            Set oTableWeld = vAnnotsSub(0)
+                            ' Récursion sur la table weldment
+                            TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables
+                            Exit Do
+                        End If
+                        Set swViewSub = swViewSub.GetNextView
+                    Loop
+                End If
+
+                ' Fermer le SLDDRW silencieusement
+                swApp.CloseDoc swDrawSub.GetPathName
+            End If
+        End If
+
+Suite:
+    Next r
+End Sub
+
+' Extrait la TableAnnotation d'un DrawingDoc (BOM standard ou weldment)
+Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
+    ' Chercher BOM standard
+    Dim swFeat As SldWorks.Feature
+    Set swFeat = swDraw.FirstFeature
+    Do While Not swFeat Is Nothing
+        If swFeat.GetTypeName2 = "BomFeat" Then
+            Dim swBom As SldWorks.BomFeature
+            Set swBom = swFeat.GetSpecificFeature2
+            Set ObtenirTable = swBom.GetTableAnnotations(0)
+            Exit Function
+        End If
+        Set swFeat = swFeat.GetNextFeature
+    Loop
+
+    ' Sinon chercher weldment
+    Dim swView As SldWorks.View
+    Dim vAnnots As Variant
+    Set swView = swDraw.GetFirstView
+    Do While Not swView Is Nothing
+        vAnnots = swView.GetTableAnnotations
+        If Not IsEmpty(vAnnots) And Not IsNull(vAnnots) Then
+            Set ObtenirTable = vAnnots(0)
+            Exit Function
+        End If
+        Set swView = swView.GetNextView
+    Loop
+
+    Set ObtenirTable = Nothing
+End Function
+
+Function EstNumeroPlanValide(NumPlan As String) As Boolean
+    ' Rejette les chaînes trop courtes ou qui contiennent des mots clés de cartouche
+    If Len(NumPlan) < 2 Then EstNumeroPlanValide = False : Exit Function
+    If InStr(1, NumPlan, "REV", vbTextCompare) > 0 Then EstNumeroPlanValide = False : Exit Function
+    If InStr(1, NumPlan, "DATE", vbTextCompare) > 0 Then EstNumeroPlanValide = False : Exit Function
+    If InStr(1, NumPlan, "DESCRIPTION", vbTextCompare) > 0 Then EstNumeroPlanValide = False : Exit Function
+    If InStr(1, NumPlan, "Mise a jour", vbTextCompare) > 0 Then EstNumeroPlanValide = False : Exit Function
+    If Len(NumPlan) = 1 And NumPlan >= "A" And NumPlan <= "Z" Then EstNumeroPlanValide = False : Exit Function
+    EstNumeroPlanValide = True
 End Function
