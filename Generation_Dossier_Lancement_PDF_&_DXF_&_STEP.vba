@@ -4,7 +4,7 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.10
+' Version : 1.11
 ' ****************************************************************************************************
 
 Sub main()
@@ -173,18 +173,18 @@ Sub main()
 
             ' MsgBox finale groupée
             Dim MsgFinale As String
-            MsgFinale = "Dossier de lancement généré avec succès !" & vbCrLf & vbCrLf & _
+            MsgFinale = "Dossier de lancement généré avec succès !" & vbCrLf & "----------------------------------------" & vbCrLf & _
                         NomRepertoire & vbCrLf & _
                         NomFichier & Indice & ".zip"
 
             If BOM_Trouvee Then
                 If Introuvables_BOM = "" Then
-                    MsgFinale = MsgFinale & vbCrLf & vbCrLf & "✔ Tous les fichiers SLDDRW ont été trouvés."
+                    MsgFinale = MsgFinale & vbCrLf & "----------------------------------------" & vbCrLf & "[OK] Tous les fichiers SLDDRW ont été trouvés."
                 Else
-                    MsgFinale = MsgFinale & vbCrLf & vbCrLf & "⚠ Fichiers SLDDRW introuvables :" & vbCrLf & Introuvables_BOM
+                    MsgFinale = MsgFinale & vbCrLf & "----------------------------------------" & vbCrLf & "[!] Fichiers SLDDRW introuvables :" & vbCrLf & Introuvables_BOM
                 End If
             ElseIf swRefModel.GetType = swDocASSEMBLY Or ContientBOM(swDraw) Then
-                MsgFinale = MsgFinale & vbCrLf & vbCrLf & "⚠ Aucune nomenclature trouvée dans la mise en plan."
+                MsgFinale = MsgFinale & vbCrLf & "----------------------------------------" & vbCrLf & "[!] Aucune nomenclature trouvée dans la mise en plan."
             End If
 
             MsgBox MsgFinale, vbInformation, "Export terminé"
