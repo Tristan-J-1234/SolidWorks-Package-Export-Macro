@@ -4,12 +4,10 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.15
+' Version : 1.16
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - Export des composants dans leurs propres dossiers ZIP individuels (au lieu du dossier global de l'assemblge)
-'   - Réutilisation du ZIP existant si l'indice du composant n'a pas changé (pas de régénération inutile)
-'   - Archivage de l'ancien ZIP composant si l'indice a changé
+'   - Copie du ZIP de chaque composant dans le ZIP global de l'assemblage
 ' ****************************************************************************************************
 
 Sub main()
@@ -573,8 +571,12 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                 ZipExistant = TrouverZipMemeIndice(CheminDestination & "\" & DossierComp, NumPlan, IndiceZip)
 
                 If ZipExistant <> "" Then
-                    ' ZIP déjà à jour → on ne régénère pas, on ferme et on passe au suivant
+                    ' ZIP déjà à jour → on ne régénère pas
                     Debug.Print "ZIP déjà à jour, ignoré : " & ZipExistant
+                    ' Copier le ZIP existant dans le dossier temporaire global
+                    Dim FSO_Copy1 As Object
+                    Set FSO_Copy1 = CreateObject("Scripting.FileSystemObject")
+                    FSO_Copy1.CopyFile ZipExistant, CheminTemp & "\" & FSO_Copy1.GetFileName(ZipExistant), True
                 Else
                     ' Indice différent ou absent → archiver + générer nouveau ZIP
                     Dim CheminTempComp As String
@@ -608,6 +610,11 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
                     ZipFiles CheminTempComp, CheminZipComp
                     FSO_Comp.DeleteFolder CheminTempComp, True
+
+                    ' Copier le ZIP nouvellement créé dans le dossier temporaire global
+                    Dim FSO_Copy2 As Object
+                    Set FSO_Copy2 = CreateObject("Scripting.FileSystemObject")
+                    FSO_Copy2.CopyFile CheminZipComp, CheminTemp & "\" & FSO_Copy2.GetFileName(CheminZipComp), True
                 End If
 
                 ' Chercher une BOM standard
