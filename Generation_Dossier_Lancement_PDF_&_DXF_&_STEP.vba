@@ -4,13 +4,12 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.14
+' Version : 1.15
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - Mutualisation des exports PDF/DXF/STEP dans la fonction ExporterMiseEnPlan
-'   - Export STEP via le modèle référencé par la première vue de la mise en plan
-'   - Lecture de l'indice de révision depuis les propriétés de chaque mise en plan composant
-'   - Correction du faux positif dans RechercheSsRepCommençantPar (ex: 98765432 → 987654321)
+'   - Export des composants dans leurs propres dossiers ZIP individuels (au lieu du dossier global de l'assemblge)
+'   - Réutilisation du ZIP existant si l'indice du composant n'a pas changé (pas de régénération inutile)
+'   - Archivage de l'ancien ZIP composant si l'indice a changé
 ' ****************************************************************************************************
 
 Sub main()
@@ -115,7 +114,7 @@ Sub main()
                 Dim CheminCSV_BOM   As String
                 Dim Introuvables_BOM As String
                 Dim BOM_Trouvee As Boolean
-                BOM_Trouvee = LectureBOM(swApp, swDraw, swRefModel, CheminPlan, CheminTemp, CheminCSV_BOM, Introuvables_BOM)
+                BOM_Trouvee = LectureBOM(swApp, swDraw, swRefModel, CheminPlan, CheminTemp, CheminDestination, CheminCSV_BOM, Introuvables_BOM)
             End If
 
             ' Chemin du fichier ZIP final
@@ -329,7 +328,7 @@ Sub ResoudreAssemblage(Byval swModel As Object)
 End Sub
 
 ' Fonction pour lire la nomenclature de la mise en plan via la BOM (Bill Of Materials)
-Function LectureBOM(swApp As SldWorks.SldWorks, swDraw As SldWorks.DrawingDoc, ByVal swRefModel As Object, CheminPlan As String, CheminTemp As String, ByRef CheminCSV_Out As String, ByRef Introuvables_Out As String) As Boolean
+Function LectureBOM(swApp As SldWorks.SldWorks, swDraw As SldWorks.DrawingDoc, ByVal swRefModel As Object, CheminPlan As String, CheminTemp As String, CheminDestination As String, ByRef CheminCSV_Out As String, ByRef Introuvables_Out As String) As Boolean
 
     ' Indexation unique de tous les SLDDRW
     Dim IndexDRW As Collection
@@ -360,7 +359,7 @@ Function LectureBOM(swApp As SldWorks.SldWorks, swDraw As SldWorks.DrawingDoc, B
     End If
 
     ' Traitement récursif
-    TraiterLignesTable swApp, oTableRacine, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTemp
+    TraiterLignesTable swApp, oTableRacine, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTemp, CheminDestination
 
     Close #iCSV
     CheminCSV_Out = CheminCSV
@@ -452,7 +451,8 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                        iCSV As Integer, _
                        DejaTraites As Collection, _
                        ByRef Introuvables As String, _
-                       CheminTemp As String)
+                       CheminTemp As String, _
+                       CheminDestination As String)
 
     ' Vérification défensive avant d'utiliser la table
     If oTable Is Nothing Then Exit Sub
@@ -523,8 +523,92 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
 
             If Not swDrawSub Is Nothing Then
 
-                ' Export de la mise en plan au format PDF et DXF, ainsi que de la pièce référencée au format STEP
-                ExporterMiseEnPlan swApp, swDrawSub, CheminTemp
+                ' Chercher ou créer le dossier du composant dans CheminDestination
+                Dim DossierComp As String
+                DossierComp = RechercheSsRepCommençantPar(CheminDestination, NumPlan)
+
+                If DossierComp = "" Then
+                    ' Lire la désignation depuis les propriétés du modèle référencé
+                    Dim swViewComp  As SldWorks.View
+                    Dim swRefComp   As Object
+                    Dim cusPropComp As SldWorks.CustomPropertyManager
+                    Dim DesigComp_brute As String
+                    Dim DesigComp As String
+                    Set swViewComp = swDrawSub.GetFirstView
+                    Set swViewComp = swViewComp.GetNextView
+                    If Not swViewComp Is Nothing Then
+                        Set swRefComp = swViewComp.ReferencedDocument
+                        If Not swRefComp Is Nothing Then
+                            Set cusPropComp = swRefComp.Extension.CustomPropertyManager("")
+                            cusPropComp.Get5 "Designation", True, DesigComp_brute, DesigComp, False
+                        End If
+                    End If
+                    DesigComp = VBA.Strings.Trim(DesigComp)
+                    If DesigComp = "" Then
+                        DossierComp = NumPlan
+                    Else
+                        DossierComp = NumPlan & " - " & DesigComp
+                    End If
+                    On Error Resume Next
+                    MkDir CheminDestination & "\" & DossierComp
+                    If Err.Number <> 0 Then
+                        Debug.Print "MkDir ECHEC : " & CheminDestination & "\" & DossierComp & " erreur=" & Err.Number & " " & Err.Description
+                        Err.Clear
+                        On Error GoTo 0
+                        GoTo FermerDoc  ' Impossible de créer le dossier, on passe au composant suivant
+                    End If
+                    On Error GoTo 0
+                End If
+
+                ' Lire indice pour nommer le ZIP
+                Dim cusPropZip  As SldWorks.CustomPropertyManager
+                Dim IndiceZip_brute As String
+                Dim IndiceZip As String
+                Set cusPropZip = swDrawSub.Extension.CustomPropertyManager("")
+                cusPropZip.Get5 "Révision", False, IndiceZip_brute, IndiceZip, False
+                IndiceZip = VBA.Strings.Trim(IndiceZip)
+
+                ' Vérifier si un ZIP avec le même indice existe déjà
+                Dim ZipExistant As String
+                ZipExistant = TrouverZipMemeIndice(CheminDestination & "\" & DossierComp, NumPlan, IndiceZip)
+
+                If ZipExistant <> "" Then
+                    ' ZIP déjà à jour → on ne régénère pas, on ferme et on passe au suivant
+                    Debug.Print "ZIP déjà à jour, ignoré : " & ZipExistant
+                Else
+                    ' Indice différent ou absent → archiver + générer nouveau ZIP
+                    Dim CheminTempComp As String
+                    CheminTempComp = CheminDestination & "\" & DossierComp & "\_temp_export"
+
+                    Dim FSO_Comp As Object
+                    Set FSO_Comp = CreateObject("Scripting.FileSystemObject")
+                    If FSO_Comp.FolderExists(CheminTempComp) Then
+                        On Error Resume Next
+                        FSO_Comp.DeleteFolder CheminTempComp, True
+                        On Error GoTo 0
+                        Wait 500
+                    End If
+                    MkDir CheminTempComp
+
+                    ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
+
+                    Dim SuffixeZip As String
+                    If IndiceZip = "" Then
+                        SuffixeZip = "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
+                    Else
+                        SuffixeZip = "-Ind" & IndiceZip & "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
+                    End If
+
+                    Dim CheminZipComp As String
+                    CheminZipComp = CheminDestination & "\" & DossierComp & "\" & NumPlan & SuffixeZip & ".zip"
+
+                    Dim CheminArchivesComp As String
+                    CheminArchivesComp = CheminDestination & "\" & DossierComp & "\Archives"
+
+                    ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
+                    ZipFiles CheminTempComp, CheminZipComp
+                    FSO_Comp.DeleteFolder CheminTempComp, True
+                End If
 
                 ' Chercher une BOM standard
                 Dim swFeatSub   As SldWorks.Feature
@@ -544,7 +628,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     ' Récursion sur la BOM standard
                     Dim oTableStd As Object
                     Set oTableStd = swTableSub
-                    TraiterLignesTable swApp, oTableStd, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTemp
+                    TraiterLignesTable swApp, oTableStd, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTempComp, CheminDestination
                 Else
                     ' Chercher une table weldment via les vues
                     Dim swViewSub As SldWorks.View
@@ -564,7 +648,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                                 On Error GoTo 0
                                 If tTypeSub = 3 Then  ' Weldment uniquement
                                     Set oTableWeld = oTSub
-                                    TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTemp
+                                    TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTempComp, CheminDestination
                                     Exit For
                                 End If
                             Next j
@@ -573,6 +657,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     Loop
                 End If
 
+                FermerDoc:
                 ' Fermer le SLDDRW silencieusement
                 swApp.CloseDoc swDrawSub.GetPathName
             End If
@@ -691,3 +776,28 @@ Sub ExporterMiseEnPlan(swApp As SldWorks.SldWorks, swDrawExp As SldWorks.Drawing
     End If
 
 End Sub
+
+' Retourne le chemin du ZIP existant si même indice, "" sinon
+Function TrouverZipMemeIndice(DossierComp As String, NumPlan As String, IndiceZip As String) As String
+    Dim FSO As Object
+    Set FSO = CreateObject("Scripting.FileSystemObject")
+    Dim oFile As Object
+    
+    ' Construire le préfixe attendu selon l'indice
+    Dim PrefixeRecherche As String
+    If IndiceZip = "" Then
+        PrefixeRecherche = LCase(NumPlan & "-")  ' NomFichier-YYYYMMDD.zip
+    Else
+        PrefixeRecherche = LCase(NumPlan & "-Ind" & IndiceZip & "-")  ' NomFichier-IndX-YYYYMMDD.zip
+    End If
+
+    For Each oFile In FSO.GetFolder(DossierComp).Files
+        If LCase(FSO.GetExtensionName(oFile.Name)) = "zip" Then
+            If Left(LCase(oFile.Name), Len(PrefixeRecherche)) = PrefixeRecherche Then
+                TrouverZipMemeIndice = oFile.Path
+                Exit Function
+            End If
+        End If
+    Next oFile
+    TrouverZipMemeIndice = ""
+End Function
