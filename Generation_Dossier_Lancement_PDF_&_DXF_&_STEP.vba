@@ -4,7 +4,13 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.13
+' Version : 1.14
+' ****************************************************************************************************
+' Modifications de la version :
+'   - Mutualisation des exports PDF/DXF/STEP dans la fonction ExporterMiseEnPlan
+'   - Export STEP via le modèle référencé par la première vue de la mise en plan
+'   - Lecture de l'indice de révision depuis les propriétés de chaque mise en plan composant
+'   - Correction du faux positif dans RechercheSsRepCommençantPar (ex: 98765432 → 987654321)
 ' ****************************************************************************************************
 
 Sub main()
@@ -15,7 +21,6 @@ Sub main()
     Dim swSheet                 As SldWorks.Sheet
     Dim swView                  As SldWorks.View
     Dim swActiveView            As SldWorks.View
-    Dim bRet                    As Boolean
     Dim cusPropMgr              As SldWorks.CustomPropertyManager
 
     Set swApp = Application.SldWorks
@@ -61,7 +66,7 @@ Sub main()
 
         ' Recherche si le répertoire de destination est créé
         Dim CheminDestination As String
-        CheminDestination = "u:\documents\plans"
+        CheminDestination = "U:\DOCUMENTS\PLANS"
 
         ' Chemin du dossier contenant les plans (pour la recherche des SLDDRW des composants de la nomenclature)
         Dim CheminPlan As String
@@ -99,33 +104,8 @@ Sub main()
             ' Création du dossier temporaire
             MkDir CheminTemp
 
-            ' Sauvegarde sous DXF
-            longstatus = swModel.SaveAs3(CheminTemp & "\" & NomFichier & Indice & ".dxf", 0, 0)
-
-            ' Désactiver l'ouverture automatique du PDF
-            Dim swExportPDFData As SldWorks.ExportPdfData
-            Set swExportPDFData = swApp.GetExportFileData(1)
-            If Not swExportPDFData Is Nothing Then
-                swExportPDFData.ViewPdfAfterSaving = False
-            End If
-
-            ' Sauvegarde sous PDF
-            ' longstatus = swModel.SaveAs3(CheminTemp & "\" & NomFichier & Indice & ".pdf", 0, 0)
-            Dim errors As Long
-            Dim warnings As Long
-            bRet = swModel.Extension.SaveAs(CheminTemp & "\" & NomFichier & Indice & ".pdf", 0, 0, swExportPDFData, errors, warnings)
-
-            ' Modification des préférences d'export STEP pour exporter la géométrie complète de l'assemblage
-            ResoudreAssemblage swRefModel
-            ' AP203 pour ne pas conserver les propriétés personnalisées dans le STEP (couleur, matière, etc.) et ainsi éviter les erreurs d'export sur certains assemblages
-            ' AP214 pour conserver les propriétés personnalisées dans le STEP (couleur, matière, etc.)
-            'swApp.SetUserPreferenceIntegerValue swStepAP, 214
-            swApp.SetUserPreferenceIntegerValue swStepExportPreference, 0
-            ' 0 = Export As tessellated geometry (facettes)
-            ' 1 = Export As solid/surface geometry (géométrie complète)
-
-            ' Sauvegarde sous STEP
-            longstatus = swRefModel.SaveAs3(CheminTemp & "\" & NomFichier & Indice & ".STEP", 0, 0)
+            ' Export de la mise en plan au format PDF et DXF, ainsi que de la pièce référencée au format STEP
+            ExporterMiseEnPlan swApp, swDraw, CheminTemp
 
             ' Si c'est un assemblage, export des mise en plan des composants de la nomenclature
             If swRefModel.GetType = swDocASSEMBLY Or ContientBOM(swDraw) Then
@@ -192,18 +172,23 @@ Sub main()
 End Sub
 
 Function RechercheSsRepCommençantPar(Chemin As String, Nom As String) As String
-    Dim FSO, ListR, sRep, Rep, LesReps, NomRepertoire
+    Dim FSO, ListR, sRep, Rep, NomRepertoire
     Set FSO = CreateObject("Scripting.FileSystemObject")
-    If Chemin = "" Then Chemin = "c:\Program files"
-        Set ListR = FSO.GetFolder(Chemin)
-        Set sRep = ListR.SubFolders
-        For Each Rep In sRep
-            If VBA.Strings.Left(Rep.Name, Len(Nom)) = Nom Then
+    If Chemin = "" Then Chemin = "C:\Program Files"
+    Set ListR = FSO.GetFolder(Chemin)
+    Set sRep = ListR.SubFolders
+    For Each Rep In sRep
+        If VBA.Strings.Left(Rep.Name, Len(Nom)) = Nom Then
+            ' Vérifier que le caractère suivant est un espace ou tiret (pas un autre chiffre/lettre)
+            Dim Suite As String
+            Suite = Mid(Rep.Name, Len(Nom) + 1)
+            If Suite = "" Or Left(Suite, 1) = " " Or Left(Suite, 1) = "-" Then
                 NomRepertoire = Rep.Name
-             Exit For
+                Exit For
             End If
-            Next
-            RechercheSsRepCommençantPar = NomRepertoire
+        End If
+    Next
+    RechercheSsRepCommençantPar = NomRepertoire
 End Function
 
 Sub ZipFiles(SourceFolder As String, ZipPath As String)
@@ -533,19 +518,13 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
         If CheminDRW <> "" Then
 
             Dim lErr As Long, lWarn As Long
+            Dim swDrawSub As SldWorks.DrawingDoc
             Set swDrawSub = swApp.OpenDoc6(CheminDRW, swDocDRAWING, swOpenDocOptions_Silent, "", lErr, lWarn)
 
             If Not swDrawSub Is Nothing Then
 
-                ' Export PDF du composant
-                Dim swPDFData As SldWorks.ExportPdfData
-                Set swPDFData = swApp.GetExportFileData(1)
-                If Not swPDFData Is Nothing Then swPDFData.ViewPdfAfterSaving = False
-                Dim lE As Long, lW As Long
-                swDrawSub.Extension.SaveAs CheminTemp & "\" & NumPlan & ".pdf", 0, 0, swPDFData, lE, lW
-
-                ' Export DXF du composant
-                swDrawSub.SaveAs3 CheminTemp & "\" & NumPlan & ".dxf", 0, 0
+                ' Export de la mise en plan au format PDF et DXF, ainsi que de la pièce référencée au format STEP
+                ExporterMiseEnPlan swApp, swDrawSub, CheminTemp
 
                 ' Chercher une BOM standard
                 Dim swFeatSub   As SldWorks.Feature
@@ -658,3 +637,57 @@ Function EstNumeroPlanValide(NumPlan As String) As Boolean
     If Len(NumPlan) = 1 And NumPlan >= "A" And NumPlan <= "Z" Then EstNumeroPlanValide = False : Exit Function
     EstNumeroPlanValide = True
 End Function
+
+' Fonction d'export de la mise en plan au format PDF et DXF, ainsi que de la pièce référencée au format STEP
+Sub ExporterMiseEnPlan(swApp As SldWorks.SldWorks, swDrawExp As SldWorks.DrawingDoc, CheminTemp As String)
+
+    Dim cusPropMgr   As SldWorks.CustomPropertyManager
+    Dim Indice_brute As String
+    Dim Indice_resolved As String
+
+    Dim FSO As Object
+    Set FSO = CreateObject("Scripting.FileSystemObject")
+    Dim NomExp As String
+    NomExp = FSO.GetBaseName(swDrawExp.GetPathName)
+    If NomExp = "" Then NomExp = FSO.GetBaseName(swDrawExp.GetTitle)
+
+    ' Lire l'indice
+    Set cusPropMgr = swDrawExp.Extension.CustomPropertyManager("")
+    cusPropMgr.Get5 "Révision", False, Indice_brute, Indice_resolved, False
+    Indice_resolved = VBA.Strings.Trim(Indice_resolved)
+
+    Dim Suffixe As String
+    If Indice_resolved = "" Then
+        Suffixe = "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
+    Else
+        Suffixe = "-Ind" & Indice_resolved & "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
+    End If
+
+    Dim NomFinal As String
+    NomFinal = NomExp & Suffixe
+
+    ' Export PDF
+    Dim swPDFData As SldWorks.ExportPdfData
+    Set swPDFData = swApp.GetExportFileData(1)
+    If Not swPDFData Is Nothing Then swPDFData.ViewPdfAfterSaving = False
+    Dim lE As Long, lW As Long
+    swDrawExp.Extension.SaveAs CheminTemp & "\" & NomFinal & ".pdf", 0, 0, swPDFData, lE, lW
+
+    ' Export DXF
+    swDrawExp.SaveAs3 CheminTemp & "\" & NomFinal & ".dxf", 0, 0
+
+    ' Export STEP via le modèle référencé par la première vue
+    Dim swView As SldWorks.View
+    Set swView = swDrawExp.GetFirstView
+    Set swView = swView.GetNextView  ' La première vue réelle (pas la vue feuille)
+    If Not swView Is Nothing Then
+        Dim swRefModel As Object
+        Set swRefModel = swView.ReferencedDocument
+        If Not swRefModel Is Nothing Then
+            ResoudreAssemblage swRefModel
+            swApp.SetUserPreferenceIntegerValue swStepExportPreference, 0
+            swRefModel.SaveAs3 CheminTemp & "\" & NomFinal & ".STEP", 0, 0
+        End If
+    End If
+
+End Sub
