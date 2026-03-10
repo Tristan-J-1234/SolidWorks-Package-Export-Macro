@@ -4,10 +4,10 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.16
+' Version : 1.17
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - Copie du ZIP de chaque composant dans le ZIP global de l'assemblage
+'   - à faire
 ' ****************************************************************************************************
 
 Sub main()
@@ -454,14 +454,14 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
 
     ' Vérification défensive avant d'utiliser la table
     If oTable Is Nothing Then Exit Sub
-    
+
     Dim NbLignes As Long
     On Error Resume Next
     NbLignes = oTable.RowCount
     If Err.Number <> 0 Then
         Err.Clear
         On Error GoTo 0
-        Exit Sub  ' L'objet ne supporte pas RowCount → ce n'est pas une table valide
+        Exit Sub
     End If
     On Error GoTo 0
 
@@ -474,17 +474,14 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
         NumPlan = Trim(oTable.Text(r, 1))
         Design  = Trim(oTable.Text(r, 2))
 
-        ' Nettoyer les retours à la ligne dans les cellules (désignations sur plusieurs lignes)
         NumPlan = Join(Split(NumPlan, vbCrLf), " ")
         NumPlan = Join(Split(NumPlan, vbLf), " ")
         Design  = Join(Split(Design, vbCrLf), " ")
         Design  = Join(Split(Design, vbLf), " ")
 
-        ' Ignorer les lignes vides ou invalides (cartouche, en-têtes parasites)
         If NumPlan = "" Then GoTo Suite
         If Not EstNumeroPlanValide(NumPlan) Then GoTo Suite
 
-        ' Ignorer si déjà traité (évite les boucles infinies)
         Dim DejaVu As Boolean
         DejaVu = False
         On Error Resume Next
@@ -495,10 +492,8 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
         On Error GoTo 0
         If DejaVu Then GoTo Suite
 
-        ' Marquer comme traité
         DejaTraites.Add NumPlan, LCase(NumPlan)
 
-        ' Chercher le SLDDRW
         Dim CheminDRW As String
         CheminDRW = TrouverDansIndex(IndexDRW, NumPlan)
 
@@ -509,10 +504,9 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
         Else
             csv_Chemin = CheminDRW
         End If
-        
+
         Print #iCSV, NumPart & ";" & Chr(34) & NumPlan & Chr(34) & ";" & Design & ";" & csv_Chemin
 
-        ' Si le SLDDRW existe, l'ouvrir et vérifier s'il contient une BOM
         If CheminDRW <> "" Then
 
             Dim lErr As Long, lWarn As Long
@@ -526,7 +520,6 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                 DossierComp = RechercheSsRepCommençantPar(CheminDestination, NumPlan)
 
                 If DossierComp = "" Then
-                    ' Lire la désignation depuis les propriétés du modèle référencé
                     Dim swViewComp  As SldWorks.View
                     Dim swRefComp   As Object
                     Dim cusPropComp As SldWorks.CustomPropertyManager
@@ -553,74 +546,52 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                         Debug.Print "MkDir ECHEC : " & CheminDestination & "\" & DossierComp & " erreur=" & Err.Number & " " & Err.Description
                         Err.Clear
                         On Error GoTo 0
-                        GoTo FermerDoc  ' Impossible de créer le dossier, on passe au composant suivant
+                        GoTo FermerDoc
                     End If
                     On Error GoTo 0
                 End If
 
                 ' Lire indice pour nommer le ZIP
-                Dim cusPropZip  As SldWorks.CustomPropertyManager
+                Dim cusPropZip      As SldWorks.CustomPropertyManager
                 Dim IndiceZip_brute As String
-                Dim IndiceZip As String
+                Dim IndiceZip       As String
                 Set cusPropZip = swDrawSub.Extension.CustomPropertyManager("")
                 cusPropZip.Get5 "Révision", False, IndiceZip_brute, IndiceZip, False
                 IndiceZip = VBA.Strings.Trim(IndiceZip)
+
+                Dim SuffixeZip As String
+                If IndiceZip = "" Then
+                    SuffixeZip = "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
+                Else
+                    SuffixeZip = "-Ind" & IndiceZip & "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
+                End If
+
+                Dim CheminZipComp      As String
+                Dim CheminArchivesComp As String
+                Dim CheminTempComp     As String
+                Dim FSO_Comp           As Object
+                CheminZipComp      = CheminDestination & "\" & DossierComp & "\" & NumPlan & SuffixeZip & ".zip"
+                CheminArchivesComp = CheminDestination & "\" & DossierComp & "\Archives"
+                CheminTempComp     = CheminDestination & "\" & DossierComp & "\_temp_export"
+                Set FSO_Comp = CreateObject("Scripting.FileSystemObject")
+
+                ' Nettoyer et créer le dossier temporaire du composant (nécessaire dans tous les cas pour la récursion)
+                If FSO_Comp.FolderExists(CheminTempComp) Then
+                    On Error Resume Next
+                    FSO_Comp.DeleteFolder CheminTempComp, True
+                    On Error GoTo 0
+                    Wait 500
+                End If
+                MkDir CheminTempComp
 
                 ' Vérifier si un ZIP avec le même indice existe déjà
                 Dim ZipExistant As String
                 ZipExistant = TrouverZipMemeIndice(CheminDestination & "\" & DossierComp, NumPlan, IndiceZip)
 
-                If ZipExistant <> "" Then
-                    ' ZIP déjà à jour → on ne régénère pas
-                    Debug.Print "ZIP déjà à jour, ignoré : " & ZipExistant
-                    ' Copier le ZIP existant dans le dossier temporaire global
-                    Dim FSO_Copy1 As Object
-                    Set FSO_Copy1 = CreateObject("Scripting.FileSystemObject")
-                    FSO_Copy1.CopyFile ZipExistant, CheminTemp & "\" & FSO_Copy1.GetFileName(ZipExistant), True
-                Else
-                    ' Indice différent ou absent → archiver + générer nouveau ZIP
-                    Dim CheminTempComp As String
-                    CheminTempComp = CheminDestination & "\" & DossierComp & "\_temp_export"
-
-                    Dim FSO_Comp As Object
-                    Set FSO_Comp = CreateObject("Scripting.FileSystemObject")
-                    If FSO_Comp.FolderExists(CheminTempComp) Then
-                        On Error Resume Next
-                        FSO_Comp.DeleteFolder CheminTempComp, True
-                        On Error GoTo 0
-                        Wait 500
-                    End If
-                    MkDir CheminTempComp
-
-                    ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
-
-                    Dim SuffixeZip As String
-                    If IndiceZip = "" Then
-                        SuffixeZip = "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
-                    Else
-                        SuffixeZip = "-Ind" & IndiceZip & "-" & VBA.Strings.Format(VBA.DateTime.Date, "YYYYMMDD")
-                    End If
-
-                    Dim CheminZipComp As String
-                    CheminZipComp = CheminDestination & "\" & DossierComp & "\" & NumPlan & SuffixeZip & ".zip"
-
-                    Dim CheminArchivesComp As String
-                    CheminArchivesComp = CheminDestination & "\" & DossierComp & "\Archives"
-
-                    ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
-                    ZipFiles CheminTempComp, CheminZipComp
-                    FSO_Comp.DeleteFolder CheminTempComp, True
-
-                    ' Copier le ZIP nouvellement créé dans le dossier temporaire global
-                    Dim FSO_Copy2 As Object
-                    Set FSO_Copy2 = CreateObject("Scripting.FileSystemObject")
-                    FSO_Copy2.CopyFile CheminZipComp, CheminTemp & "\" & FSO_Copy2.GetFileName(CheminZipComp), True
-                End If
-
-                ' Chercher une BOM standard
-                Dim swFeatSub   As SldWorks.Feature
-                Dim swBomSub    As SldWorks.BomFeature
-                Dim swTableSub  As SldWorks.BomTableAnnotation
+                ' Chercher une BOM standard pour la récursion
+                Dim swFeatSub  As SldWorks.Feature
+                Dim swBomSub   As SldWorks.BomFeature
+                Dim swTableSub As SldWorks.BomTableAnnotation
                 Set swFeatSub = swDrawSub.FirstFeature
                 Do While Not swFeatSub Is Nothing
                     If swFeatSub.GetTypeName2 = "BomFeat" Then
@@ -632,13 +603,13 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                 Loop
 
                 If Not swTableSub Is Nothing Then
-                    ' Récursion sur la BOM standard
+                    ' Récursion sur la BOM standard — les sous-composants iront dans CheminTempComp
                     Dim oTableStd As Object
                     Set oTableStd = swTableSub
                     TraiterLignesTable swApp, oTableStd, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTempComp, CheminDestination
                 Else
                     ' Chercher une table weldment via les vues
-                    Dim swViewSub As SldWorks.View
+                    Dim swViewSub  As SldWorks.View
                     Dim vAnnotsSub As Variant
                     Dim oTableWeld As Object
                     Set swViewSub = swDrawSub.GetFirstView
@@ -653,7 +624,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                                 On Error Resume Next
                                 tTypeSub = oTSub.TableType
                                 On Error GoTo 0
-                                If tTypeSub = 3 Then  ' Weldment uniquement
+                                If tTypeSub = 3 Then
                                     Set oTableWeld = oTSub
                                     TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTempComp, CheminDestination
                                     Exit For
@@ -664,8 +635,27 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     Loop
                 End If
 
+                ' Maintenant que la récursion est faite, construire le ZIP du composant
+                If ZipExistant <> "" Then
+                    ' ZIP existant : le recréer pour inclure les sous-composants éventuels
+                    ' Supprimer l'ancien ZIP et recréer avec PDF/DXF/STEP + sous-composants
+                    ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
+                    ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
+                    ZipFiles CheminTempComp, CheminZipComp
+                Else
+                    ' Nouveau ZIP : exporter puis zipper
+                    ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
+                    ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
+                    ZipFiles CheminTempComp, CheminZipComp
+                End If
+
+                ' Copier le ZIP du composant dans le dossier temporaire du parent
+                FSO_Comp.CopyFile CheminZipComp, CheminTemp & "\" & FSO_Comp.GetFileName(CheminZipComp), True
+
+                ' Supprimer le dossier temporaire du composant
+                FSO_Comp.DeleteFolder CheminTempComp, True
+
                 FermerDoc:
-                ' Fermer le SLDDRW silencieusement
                 swApp.CloseDoc swDrawSub.GetPathName
             End If
         End If
