@@ -4,10 +4,11 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.17
+' Version : 1.18
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - à faire
+'   - pour l'instant que du debug et diagnistic
+'   - Simplification du bloc de recherche de BOM dans TraiterLignesTable en appelant ObtenirTable qui gère déjà la recherche de la BOM standard ou weldment
 ' ****************************************************************************************************
 
 Sub main()
@@ -130,9 +131,9 @@ Sub main()
             ZipFiles CheminTemp, CheminZip
 
             ' Suppression du dossier temporaire
-            Dim FSO2 As Object
-            Set FSO2 = CreateObject("Scripting.FileSystemObject")
-            FSO2.DeleteFolder CheminTemp, True
+            ' diagnostic donc commentaire : Dim FSO2 As Object
+            ' diagnostic donc commentaire : Set FSO2 = CreateObject("Scripting.FileSystemObject")
+            ' diagnostic donc commentaire : FSO2.DeleteFolder CheminTemp, True
 
             ' Ouverture du dossier contenant le ZIP
             Shell "EXPLORER /n,/e," & CheminDestination & "\" & NomRepertoire
@@ -515,6 +516,16 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
 
             If Not swDrawSub Is Nothing Then
 
+                ' diagnostic :
+                Debug.Print "--- Features de : " & NumPlan
+                Dim swFeatDbg As SldWorks.Feature
+                Set swFeatDbg = swDrawSub.FirstFeature
+                Do While Not swFeatDbg Is Nothing
+                    Debug.Print "  Feature : " & swFeatDbg.GetTypeName2
+                    Set swFeatDbg = swFeatDbg.GetNextFeature
+                Loop
+                Debug.Print "--- Fin features"
+
                 ' Chercher ou créer le dossier du composant dans CheminDestination
                 Dim DossierComp As String
                 DossierComp = RechercheSsRepCommençantPar(CheminDestination, NumPlan)
@@ -588,51 +599,14 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                 Dim ZipExistant As String
                 ZipExistant = TrouverZipMemeIndice(CheminDestination & "\" & DossierComp, NumPlan, IndiceZip)
 
-                ' Chercher une BOM standard pour la récursion
-                Dim swFeatSub  As SldWorks.Feature
-                Dim swBomSub   As SldWorks.BomFeature
-                Dim swTableSub As SldWorks.BomTableAnnotation
-                Set swFeatSub = swDrawSub.FirstFeature
-                Do While Not swFeatSub Is Nothing
-                    If swFeatSub.GetTypeName2 = "BomFeat" Then
-                        Set swBomSub = swFeatSub.GetSpecificFeature2
-                        Set swTableSub = swBomSub.GetTableAnnotations(0)
-                        Exit Do
-                    End If
-                    Set swFeatSub = swFeatSub.GetNextFeature
-                Loop
+                ' Chercher la BOM via ObtenirTable (BOM standard ou weldment)
+                Dim oTableSub As Object
+                Set oTableSub = ObtenirTable(swDrawSub)
 
-                If Not swTableSub Is Nothing Then
-                    ' Récursion sur la BOM standard — les sous-composants iront dans CheminTempComp
-                    Dim oTableStd As Object
-                    Set oTableStd = swTableSub
-                    TraiterLignesTable swApp, oTableStd, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTempComp, CheminDestination
-                Else
-                    ' Chercher une table weldment via les vues
-                    Dim swViewSub  As SldWorks.View
-                    Dim vAnnotsSub As Variant
-                    Dim oTableWeld As Object
-                    Set swViewSub = swDrawSub.GetFirstView
-                    Do While Not swViewSub Is Nothing
-                        vAnnotsSub = swViewSub.GetTableAnnotations
-                        If Not IsEmpty(vAnnotsSub) And Not IsNull(vAnnotsSub) Then
-                            Dim j As Long
-                            For j = 0 To UBound(vAnnotsSub)
-                                Dim oTSub As Object
-                                Set oTSub = vAnnotsSub(j)
-                                Dim tTypeSub As Long
-                                On Error Resume Next
-                                tTypeSub = oTSub.TableType
-                                On Error GoTo 0
-                                If tTypeSub = 3 Then
-                                    Set oTableWeld = oTSub
-                                    TraiterLignesTable swApp, oTableWeld, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTempComp, CheminDestination
-                                    Exit For
-                                End If
-                            Next j
-                        End If
-                        Set swViewSub = swViewSub.GetNextView
-                    Loop
+                Debug.Print "BOM trouvée pour " & NumPlan & " : " & Not (oTableSub Is Nothing)
+
+                If Not oTableSub Is Nothing Then
+                    TraiterLignesTable swApp, oTableSub, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTempComp, CheminDestination
                 End If
 
                 ' Maintenant que la récursion est faite, construire le ZIP du composant
@@ -641,19 +615,24 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     ' Supprimer l'ancien ZIP et recréer avec PDF/DXF/STEP + sous-composants
                     ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
                     ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
-                    ZipFiles CheminTempComp, CheminZipComp
+                    ' diagnostic donc commentaire : ZipFiles CheminTempComp, CheminZipComp
                 Else
                     ' Nouveau ZIP : exporter puis zipper
                     ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
                     ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
-                    ZipFiles CheminTempComp, CheminZipComp
+                    ' diagnostic donc commentaire : ZipFiles CheminTempComp, CheminZipComp
                 End If
 
                 ' Copier le ZIP du composant dans le dossier temporaire du parent
-                FSO_Comp.CopyFile CheminZipComp, CheminTemp & "\" & FSO_Comp.GetFileName(CheminZipComp), True
+                ' diagnostic donc commentaire : FSO_Comp.CopyFile CheminZipComp, CheminTemp & "\" & FSO_Comp.GetFileName(CheminZipComp), True
+
+                ' diagnostic :
+                Debug.Print "Composant traité : " & NumPlan
+                Debug.Print "  _temp_export parent  : " & CheminTemp
+                Debug.Print "  _temp_export composant: " & CheminTempComp
 
                 ' Supprimer le dossier temporaire du composant
-                FSO_Comp.DeleteFolder CheminTempComp, True
+                ' diagnostic donc commentaire : FSO_Comp.DeleteFolder CheminTempComp, True
 
                 FermerDoc:
                 swApp.CloseDoc swDrawSub.GetPathName
@@ -666,6 +645,36 @@ End Sub
 
 ' Extrait la TableAnnotation d'un DrawingDoc (BOM standard ou weldment)
 Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
+
+    ' diagnostic :
+    ' Debug : lister toutes les tables de toutes les vues
+    Dim swViewDbg As SldWorks.View
+    Set swViewDbg = swDraw.GetFirstView
+    Dim vDbg As Integer
+    vDbg = 0
+    Do While Not swViewDbg Is Nothing
+        Debug.Print "  Vue " & vDbg & " : " & swViewDbg.Name
+        Dim vAnnotsDbg As Variant
+        vAnnotsDbg = swViewDbg.GetTableAnnotations
+        If IsEmpty(vAnnotsDbg) Or IsNull(vAnnotsDbg) Then
+            Debug.Print "    -> GetTableAnnotations : vide/null"
+        Else
+            Dim kDbg As Long
+            For kDbg = 0 To UBound(vAnnotsDbg)
+                Dim oTDbg As Object
+                Set oTDbg = vAnnotsDbg(kDbg)
+                Dim tTypeDbg As Long
+                On Error Resume Next
+                tTypeDbg = oTDbg.TableType
+                On Error GoTo 0
+                Debug.Print "    -> Table type : " & tTypeDbg
+            Next kDbg
+        End If
+        vDbg = vDbg + 1
+        Set swViewDbg = swViewDbg.GetNextView
+    Loop
+    ' Fin debug
+
     ' Chercher BOM standard en priorité
     Dim swFeat As SldWorks.Feature
     Set swFeat = swDraw.FirstFeature
