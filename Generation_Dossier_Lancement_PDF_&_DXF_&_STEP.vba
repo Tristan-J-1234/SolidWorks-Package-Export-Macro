@@ -4,12 +4,11 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.19
+' Version : 1.20
 ' ****************************************************************************************************
 ' Modifications de la version :
 '   - pour l'instant que du debug et diagnostic
-'   - Correction du nom du ZIP (coupure au " - " au lieu du premier tiret)
-'   - Ajout du type de document détecté dans le message final (Assemblage / Pièce avec nomenclature / Pièce simple)
+'   - ZIP imbriqués : le ZIP d'un assemblage contient désormais les ZIP de ses composants enfants (récursif)
 ' ****************************************************************************************************
 
 Sub main()
@@ -634,27 +633,25 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     TraiterLignesTable swApp, oTableSub, IndexDRW, iCSV, DejaTraites, Introuvables, CheminTempComp, CheminDestination
                 End If
 
-                ' Maintenant que la récursion est faite, construire le ZIP du composant
-                If ZipExistant <> "" Then
-                    ' ZIP existant : le recréer pour inclure les sous-composants éventuels
-                    ' Supprimer l'ancien ZIP et recréer avec PDF/DXF/STEP + sous-composants
-                    ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
-                    ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
-                    ' diagnostic donc commentaire : ZipFiles CheminTempComp, CheminZipComp
-                Else
-                    ' Nouveau ZIP : exporter puis zipper
-                    ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
-                    ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
-                    ' diagnostic donc commentaire : ZipFiles CheminTempComp, CheminZipComp
-                End If
+                ' La récursion est déjà faite juste au-dessus (TraiterLignesTable récursif)
+                ' CheminTempComp contient déjà les ZIP des enfants copiés par la récursion
 
-                ' Copier le ZIP du composant dans le dossier temporaire du parent
-                ' diagnostic donc commentaire : FSO_Comp.CopyFile CheminZipComp, CheminTemp & "\" & FSO_Comp.GetFileName(CheminZipComp), True
+                ' 1. Exporter PDF/DXF/STEP du composant courant dans son _temp_export
+                ExporterMiseEnPlan swApp, swDrawSub, CheminTempComp
 
-                ' diagnostic :
-                Debug.Print "Composant traité : " & NumPlan
-                Debug.Print "  _temp_export parent  : " & CheminTemp
-                Debug.Print "  _temp_export composant: " & CheminTempComp
+                ' 2. Archiver les anciens ZIP du composant
+                ArchiverAnciensZip CheminDestination & "\" & DossierComp, CheminZipComp, CheminArchivesComp, NumPlan
+
+                ' 3. Créer le ZIP du composant (contient PDF/DXF/STEP + ZIP des enfants)
+                ZipFiles CheminTempComp, CheminZipComp
+
+                ' 4. Copier ce ZIP dans le _temp_export du PARENT pour qu'il l'inclue dans son propre ZIP
+                FSO_Comp.CopyFile CheminZipComp, CheminTemp & "\" & FSO_Comp.GetFileName(CheminZipComp), True
+
+                ' 5. Nettoyer le dossier temporaire du composant
+                FSO_Comp.DeleteFolder CheminTempComp, True
+
+                Debug.Print "Composant traité et ZIP copié dans parent : " & NumPlan
 
                 ' Supprimer le dossier temporaire du composant
                 ' diagnostic donc commentaire : FSO_Comp.DeleteFolder CheminTempComp, True
