@@ -4,11 +4,10 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.20
+' Version : 1.21
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - pour l'instant que du debug et diagnostic
-'   - ZIP imbriqués : le ZIP d'un assemblage contient désormais les ZIP de ses composants enfants (récursif)
+'   - Réactivation de la suppression du dossier temporaire du composant (diagnostic terminé)
 ' ****************************************************************************************************
 
 Sub main()
@@ -139,9 +138,9 @@ Sub main()
             ZipFiles CheminTemp, CheminZip
 
             ' Suppression du dossier temporaire
-            ' diagnostic donc commentaire : Dim FSO2 As Object
-            ' diagnostic donc commentaire : Set FSO2 = CreateObject("Scripting.FileSystemObject")
-            ' diagnostic donc commentaire : FSO2.DeleteFolder CheminTemp, True
+            Dim FSO2 As Object
+            Set FSO2 = CreateObject("Scripting.FileSystemObject")
+            FSO2.DeleteFolder CheminTemp, True
 
             ' Ouverture du dossier contenant le ZIP
             Shell "EXPLORER /n,/e," & CheminDestination & "\" & NomRepertoire
@@ -531,16 +530,11 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
 
             Dim lErr As Long, lWarn As Long
             Dim swDrawSub As SldWorks.DrawingDoc
-            ' diagnostic : ouverture silencieuse
             Set swDrawSub = swApp.OpenDoc6(CheminDRW, swDocDRAWING, swOpenDocOptions_Silent, "", lErr, lWarn)
-            ' Set swDrawSub = swApp.OpenDoc6(CheminDRW, swDocDRAWING, 0, "", lErr, lWarn)
 
             If Not swDrawSub Is Nothing Then
 
-                ' diagnostic : wait car on ouvre en visible (pas en siliencieux)
-                'Wait 500
-
-                ' diagnostic :
+                ' Debug : lister les features de la mise en plan du composant pour vérifier que la BOM est bien lue
                 Debug.Print "--- Features de : " & NumPlan
                 Dim swFeatDbg As SldWorks.Feature
                 Set swFeatDbg = swDrawSub.FirstFeature
@@ -549,6 +543,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     Set swFeatDbg = swFeatDbg.GetNextFeature
                 Loop
                 Debug.Print "--- Fin features"
+                ' Fin debug
 
                 ' Chercher ou créer le dossier du composant dans CheminDestination
                 Dim DossierComp As String
@@ -578,6 +573,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                     On Error Resume Next
                     MkDir CheminDestination & "\" & DossierComp
                     If Err.Number <> 0 Then
+                        ' Debug : afficher l'erreur de création du dossier si échec (ex: caractères interdits dans le nom de dossier, permissions, etc.)
                         Debug.Print "MkDir ECHEC : " & CheminDestination & "\" & DossierComp & " erreur=" & Err.Number & " " & Err.Description
                         Err.Clear
                         On Error GoTo 0
@@ -627,6 +623,7 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                 Dim oTableSub As Object
                 Set oTableSub = ObtenirTable(swDrawSub)
 
+                ' Debug : vérifier que la table est trouvée pour le composant
                 Debug.Print "BOM trouvée pour " & NumPlan & " : " & Not (oTableSub Is Nothing)
 
                 If Not oTableSub Is Nothing Then
@@ -651,10 +648,11 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
                 ' 5. Nettoyer le dossier temporaire du composant
                 FSO_Comp.DeleteFolder CheminTempComp, True
 
+                ' Debug : afficher le composant traité et le ZIP copié dans le parent
                 Debug.Print "Composant traité et ZIP copié dans parent : " & NumPlan
 
                 ' Supprimer le dossier temporaire du composant
-                ' diagnostic donc commentaire : FSO_Comp.DeleteFolder CheminTempComp, True
+                diagnostic donc commentaire : FSO_Comp.DeleteFolder CheminTempComp, True
 
                 FermerDoc:
                 swApp.CloseDoc swDrawSub.GetPathName
@@ -668,7 +666,6 @@ End Sub
 ' Extrait la TableAnnotation d'un DrawingDoc (BOM standard ou weldment)
 Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
 
-    ' diagnostic :
     ' Debug : lister toutes les tables de toutes les vues
     Dim swViewDbg As SldWorks.View
     Set swViewDbg = swDraw.GetFirstView
