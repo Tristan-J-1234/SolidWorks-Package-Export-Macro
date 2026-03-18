@@ -4,11 +4,10 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.22
+' Version : 1.23
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - Mise en forme du code et ajout de commentaires pour plus de clarté
-'   - Suppression de la suppression du dossier temporaire car déjà fait dans le parent
+'   - Le dossier de destination est désormais U:\DOCUMENTS\PLANS et non plus T:\Commun\Transfert\Tristan JACQ\ qui servait au debug
 ' ****************************************************************************************************
 
 Sub main()
@@ -71,8 +70,8 @@ Sub main()
 
         ' Recherche si le répertoire de destination est créé
         Dim CheminDestination As String
-        ' CheminDestination = "U:\DOCUMENTS\PLANS"
-        CheminDestination = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks\test export"
+        CheminDestination = "U:\DOCUMENTS\PLANS"
+        ' CheminDestination = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks\test export"
 
         ' Chemin du dossier contenant les plans (pour la recherche des SLDDRW des composants de la nomenclature)
         Dim CheminPlan As String
