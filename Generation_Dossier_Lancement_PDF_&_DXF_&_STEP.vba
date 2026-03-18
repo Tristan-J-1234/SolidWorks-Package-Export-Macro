@@ -4,11 +4,12 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Mars 2026
-' Version : 1.18
+' Version : 1.19
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - pour l'instant que du debug et diagnistic
-'   - Simplification du bloc de recherche de BOM dans TraiterLignesTable en appelant ObtenirTable qui gère déjà la recherche de la BOM standard ou weldment
+'   - pour l'instant que du debug et diagnostic
+'   - Correction du nom du ZIP (coupure au " - " au lieu du premier tiret)
+'   - Ajout du type de document détecté dans le message final (Assemblage / Pièce avec nomenclature / Pièce simple)
 ' ****************************************************************************************************
 
 Sub main()
@@ -45,7 +46,14 @@ Sub main()
 
         ' Extraction nom du fichier du nom de la feuille
         Dim NomFichier As String
-        NomFichier = (VBA.Strings.Left(swModel.GetTitle, InStr(swModel.GetTitle, "-") - 1))
+        Dim PosSepar As Long
+        PosSepar = InStr(swModel.GetTitle, " - ")
+        If PosSepar > 0 Then
+            NomFichier = VBA.Strings.Left(swModel.GetTitle, PosSepar - 1)
+        Else
+            NomFichier = swModel.GetTitle  ' Pas de " - " trouvé : on garde tout
+        End If
+        NomFichier = VBA.Strings.Trim(NomFichier)
         NomFichier = VBA.Strings.Trim(NomFichier)
 
         ' Demande indice de révision puis ajout date du jour
@@ -64,7 +72,8 @@ Sub main()
 
         ' Recherche si le répertoire de destination est créé
         Dim CheminDestination As String
-        CheminDestination = "U:\DOCUMENTS\PLANS"
+        ' CheminDestination = "U:\DOCUMENTS\PLANS"
+        CheminDestination = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks\test export"
 
         ' Chemin du dossier contenant les plans (pour la recherche des SLDDRW des composants de la nomenclature)
         Dim CheminPlan As String
@@ -154,6 +163,17 @@ Sub main()
             MsgFinale = "Dossier de lancement généré avec succès !" & vbCrLf & "----------------------------------------" & vbCrLf & _
                         NomRepertoire & vbCrLf & _
                         NomFichier & Indice & ".zip"
+
+            ' Type de document détecté
+            Dim TypeDoc As String
+            If swRefModel.GetType = swDocASSEMBLY Then
+                TypeDoc = "Assemblage"
+            ElseIf ContientBOM(swDraw) Then
+                TypeDoc = "Pièce avec nomenclature (ex: soudure)"
+            Else
+                TypeDoc = "Pièce simple"
+            End If
+            MsgFinale = MsgFinale & vbCrLf & "----------------------------------------" & vbCrLf & "Type détecté : " & TypeDoc
 
             If BOM_Trouvee Then
                 If Introuvables_BOM = "" Then
@@ -512,9 +532,14 @@ Sub TraiterLignesTable(swApp As SldWorks.SldWorks, _
 
             Dim lErr As Long, lWarn As Long
             Dim swDrawSub As SldWorks.DrawingDoc
+            ' diagnostic : ouverture silencieuse
             Set swDrawSub = swApp.OpenDoc6(CheminDRW, swDocDRAWING, swOpenDocOptions_Silent, "", lErr, lWarn)
+            ' Set swDrawSub = swApp.OpenDoc6(CheminDRW, swDocDRAWING, 0, "", lErr, lWarn)
 
             If Not swDrawSub Is Nothing Then
+
+                ' diagnostic : wait car on ouvre en visible (pas en siliencieux)
+                'Wait 500
 
                 ' diagnostic :
                 Debug.Print "--- Features de : " & NumPlan
