@@ -3,11 +3,11 @@
 ' de la mise en plan au format PDF, DXF et de la pièce au format STEP
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
-' Date : Mars 2026
-' Version : 1.23
+' Date : Avril 2026
+' Version : 1.24
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - Le dossier de destination est désormais U:\DOCUMENTS\PLANS et non plus T:\Commun\Transfert\Tristan JACQ\ qui servait au debug
+'   - [à remplir]
 ' ****************************************************************************************************
 
 Sub main()
@@ -70,13 +70,13 @@ Sub main()
 
         ' Recherche si le répertoire de destination est créé
         Dim CheminDestination As String
-        CheminDestination = "U:\DOCUMENTS\PLANS"
-        ' CheminDestination = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks\test export"
+        ' CheminDestination = "U:\DOCUMENTS\PLANS"
+        CheminDestination = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks\test export"
 
         ' Chemin du dossier contenant les plans (pour la recherche des SLDDRW des composants de la nomenclature)
         Dim CheminPlan As String
-        CheminPlan = "I:\Thomas plans"
-        ' CHeminPlan = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks"
+        ' CheminPlan = "I:\Thomas plans"
+        CheminPlan = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks"
 
         Dim NomRepertoire As String
         NomRepertoire = RechercheSsRepCommençantPar(CheminDestination, NomFichier)
@@ -675,6 +675,13 @@ End Sub
 ' Fonction qui extrait la TableAnnotation d'un DrawingDoc (BOM standard ou weldment)
 Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
 
+    Dim swFeatTest As SldWorks.Feature
+    Set swFeatTest = swDraw.FirstFeature
+    Do While Not swFeatTest Is Nothing
+        Debug.Print "FEAT : " & swFeatTest.GetTypeName2
+        Set swFeatTest = swFeatTest.GetNextFeature
+    Loop
+
     ' Debug : lister toutes les tables de toutes les vues
     Dim swViewDbg As SldWorks.View
     Set swViewDbg = swDraw.GetFirstView
@@ -703,7 +710,7 @@ Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
     Loop
     ' Fin debug
 
-    ' Chercher BOM standard en priorité
+    ' Chercher BomFeat en priorité via les features
     Dim swFeat As SldWorks.Feature
     Set swFeat = swDraw.FirstFeature
     Do While Not swFeat Is Nothing
@@ -716,31 +723,41 @@ Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
         Set swFeat = swFeat.GetNextFeature
     Loop
 
-    ' Sinon chercher weldment uniquement (type 10)
-    ' swTableAnnotation_e : 0=General, 1=BOM, 2=Revision, 3=Weldment, 4=HoleChart, etc.
-    Dim swView As SldWorks.View
-    Dim vAnnots As Variant
-    Set swView = swDraw.GetFirstView
-    Do While Not swView Is Nothing
-        vAnnots = swView.GetTableAnnotations
-        If Not IsEmpty(vAnnots) And Not IsNull(vAnnots) Then
-            Dim i As Long
-            For i = 0 To UBound(vAnnots)
-                Dim oT As Object
-                Set oT = vAnnots(i)
-                ' TableType : 0=General, 1=BOM, 2=Revision, 3=Weldment cutlist, 4=HoleChart
-                Dim tType As Long
-                On Error Resume Next
-                tType = oT.TableType
-                On Error GoTo 0
-                ' On accepte uniquement Weldment (3) — pas Revision (2) ni HoleChart (4)
-                If tType = 3 Then
-                    Set ObtenirTable = oT
+    ' Chercher WeldmentTableFeat : identifier la feature cible, puis retrouver
+    ' la TableAnnotation correspondante dans les vues via GetFeature
+    ' Chercher WeldmentTableFeat via les features
+    Dim swFeatWeld As SldWorks.Feature
+    Set swFeatWeld = swDraw.FirstFeature
+    Do While Not swFeatWeld Is Nothing
+        If swFeatWeld.GetTypeName2 = "WeldmentTableFeat" Then
+            Dim swViewRoot As SldWorks.View
+            Set swViewRoot = swDraw.GetFirstView
+            Dim vAnnotsRoot As Variant
+            vAnnotsRoot = swViewRoot.GetTableAnnotations
+            If Not IsEmpty(vAnnotsRoot) And Not IsNull(vAnnotsRoot) Then
+                Dim kW As Long
+                Dim oBest As Object
+                Dim nBestRows As Long
+                nBestRows = 0
+                For kW = 0 To UBound(vAnnotsRoot)
+                    Dim oTW As Object
+                    Set oTW = vAnnotsRoot(kW)
+                    Dim nR As Long
+                    On Error Resume Next
+                    nR = oTW.RowCount
+                    On Error GoTo 0
+                    If nR > nBestRows Then
+                        nBestRows = nR
+                        Set oBest = oTW
+                    End If
+                Next kW
+                If Not oBest Is Nothing Then
+                    Set ObtenirTable = oBest
                     Exit Function
                 End If
-            Next i
+            End If
         End If
-        Set swView = swView.GetNextView
+        Set swFeatWeld = swFeatWeld.GetNextFeature
     Loop
 
     Set ObtenirTable = Nothing
