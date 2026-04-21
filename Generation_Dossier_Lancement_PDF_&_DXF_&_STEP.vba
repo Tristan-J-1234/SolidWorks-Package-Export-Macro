@@ -4,10 +4,12 @@
 ' ****************************************************************************************************
 ' Auteur : Tristan JACQ
 ' Date : Avril 2026
-' Version : 1.24
+' Version : 1.25
 ' ****************************************************************************************************
 ' Modifications de la version :
-'   - [à remplir]
+'   - Correction de la détection de la nomenclature weldment (cut list) : GetTableAnnotations sur
+'     WeldmentTableFeat ne fonctionnait pas ; on itère désormais sur les tables de la Vue 0 et on
+'     sélectionne celle avec le plus de lignes pour distinguer cut list et tableau de révisions.
 ' ****************************************************************************************************
 
 Sub main()
@@ -70,13 +72,13 @@ Sub main()
 
         ' Recherche si le répertoire de destination est créé
         Dim CheminDestination As String
-        ' CheminDestination = "U:\DOCUMENTS\PLANS"
-        CheminDestination = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks\test export"
+        CheminDestination = "U:\DOCUMENTS\PLANS"
+        ' CheminDestination = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks\test export"
 
         ' Chemin du dossier contenant les plans (pour la recherche des SLDDRW des composants de la nomenclature)
         Dim CheminPlan As String
-        ' CheminPlan = "I:\Thomas plans"
-        CheminPlan = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks"
+        CheminPlan = "I:\Thomas plans"
+        ' CheminPlan = "T:\Commun\Transfert\Tristan JACQ\6 - Macro SolidWorks\Fichiers SolidWorks"
 
         Dim NomRepertoire As String
         NomRepertoire = RechercheSsRepCommençantPar(CheminDestination, NomFichier)
@@ -675,41 +677,6 @@ End Sub
 ' Fonction qui extrait la TableAnnotation d'un DrawingDoc (BOM standard ou weldment)
 Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
 
-    Dim swFeatTest As SldWorks.Feature
-    Set swFeatTest = swDraw.FirstFeature
-    Do While Not swFeatTest Is Nothing
-        Debug.Print "FEAT : " & swFeatTest.GetTypeName2
-        Set swFeatTest = swFeatTest.GetNextFeature
-    Loop
-
-    ' Debug : lister toutes les tables de toutes les vues
-    Dim swViewDbg As SldWorks.View
-    Set swViewDbg = swDraw.GetFirstView
-    Dim vDbg As Integer
-    vDbg = 0
-    Do While Not swViewDbg Is Nothing
-        Debug.Print "  Vue " & vDbg & " : " & swViewDbg.Name
-        Dim vAnnotsDbg As Variant
-        vAnnotsDbg = swViewDbg.GetTableAnnotations
-        If IsEmpty(vAnnotsDbg) Or IsNull(vAnnotsDbg) Then
-            Debug.Print "    -> GetTableAnnotations : vide/null"
-        Else
-            Dim kDbg As Long
-            For kDbg = 0 To UBound(vAnnotsDbg)
-                Dim oTDbg As Object
-                Set oTDbg = vAnnotsDbg(kDbg)
-                Dim tTypeDbg As Long
-                On Error Resume Next
-                tTypeDbg = oTDbg.TableType
-                On Error GoTo 0
-                Debug.Print "    -> Table type : " & tTypeDbg
-            Next kDbg
-        End If
-        vDbg = vDbg + 1
-        Set swViewDbg = swViewDbg.GetNextView
-    Loop
-    ' Fin debug
-
     ' Chercher BomFeat en priorité via les features
     Dim swFeat As SldWorks.Feature
     Set swFeat = swDraw.FirstFeature
@@ -723,9 +690,7 @@ Function ObtenirTable(swDraw As SldWorks.DrawingDoc) As Object
         Set swFeat = swFeat.GetNextFeature
     Loop
 
-    ' Chercher WeldmentTableFeat : identifier la feature cible, puis retrouver
-    ' la TableAnnotation correspondante dans les vues via GetFeature
-    ' Chercher WeldmentTableFeat via les features
+    ' Chercher WeldmentTableFeat : prendre la table avec le plus de lignes dans la Vue 0
     Dim swFeatWeld As SldWorks.Feature
     Set swFeatWeld = swDraw.FirstFeature
     Do While Not swFeatWeld Is Nothing
